@@ -51,7 +51,9 @@ t  = np.linspace(t0, tf, N)
 
 # coefficients
 k = 0.0002
-K = 0.1                # PDE coeff
+Kx = 0.02                # PDE coeff for x terms
+Ky = 0.01
+C  = 1 - 2*(Kx + Ky)
 
 # initial condition function
 def f(x, y):
@@ -72,9 +74,9 @@ plt.ion()
 
 # Loop over time
 for j in range(1,N):
-    un[1:My+1, 1:Mx+1] = u[1:My+1:, 1:Mx+1] + \
-        K*(u[1:My+1:, 0:Mx] - 2.0*u[1:My+1, 1:Mx+1] + u[1:My+1, 2:Mx+2] ) + \
-        K*(u[0:My, 1:Mx+1] - 2.0*u[1:My+1, 1:Mx+1] + u[2:My+2, 1:Mx+1] )
+    un[1:My+1, 1:Mx+1] = C*u[1:My+1:, 1:Mx+1] + \
+                         Kx*(u[1:My+1:, 0:Mx] + u[1:My+1, 2:Mx+2] ) + \
+                         Ky*(u[0:My,  1:Mx+1] + u[2:My+2, 1:Mx+1] )
 
     # Force Boundary Conditions
     un[0, :]    = 0.0  # first row
@@ -109,9 +111,6 @@ if i == 0:
 sys.exit()
 
 # PLOTTING
-
-
-
 fig = plt.figure()
 ims = []
 for j in xrange(N):
