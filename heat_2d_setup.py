@@ -59,8 +59,8 @@ t  = np.linspace(t0, tf, N)
 
 # coefficients
 k  = 0.0002
-Kx = 0.02                # PDE coeff for x terms
-Ky = 0.01
+Kx = np.float64(0.02)                # PDE coeff for x terms
+Ky = np.float64(0.01)
 C  = 1 - 2*(Kx + Ky)
 
 

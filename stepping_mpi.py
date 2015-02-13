@@ -55,22 +55,7 @@ comm.Barrier()
 t_final = (MPI.Wtime() - t_start)  # stop MPI timer
 
 
-if rank == 0:
-    if writeToFile:
-        # write time to a file
-        F = open('./tests/par-step/p%d-M%s-new.txt' % (p, sys.argv[1].zfill(2)), 'r+')
-        F.read()
-        F.write('%f\n' % t_final)
-        F.close()
-
-    print t_final
-
-    # write the solution to a file, but only once!
-    if i == 0:
-        G = open('./tests/par-step/solution-p%d-new.txt' % p, 'r+')
-        G.read()
-        G.write('%s\n' % str(u))
-        G.close()
+writer(t_final, u, writeToFile, i, 'original', 'par-step')
 
 sys.exit()
 
