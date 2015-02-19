@@ -54,6 +54,7 @@ for j in range(1, N):
 comm.Barrier()
 t_final = (MPI.Wtime() - t_start)  # stop MPI timer
 
+print t_final
 
 writer(t_final, u, writeToFile, i, 'original', 'par-step')
 

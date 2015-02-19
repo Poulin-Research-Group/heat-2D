@@ -1,7 +1,7 @@
       subroutine heatf(un,u,Nx,Ny,C,Kx,Ky)
       implicit none
 
-      double precision un(Nx,Ny),u(Nx,Ny)
+      double precision un(Ny,Nx),u(Ny,Nx)
       double precision C,Kx,Ky
         
       integer Nx,Ny,i,j
@@ -9,8 +9,6 @@ cf2py intent(in) :: C,Kx,Ky
 cf2py intent(in) :: u
 cf2py intent(in,out) :: un
 cf2py intent(hide) :: Nx,Ny
-
-      ! print *, C, Kx, Ky
 
 
       do j=2,Nx-1

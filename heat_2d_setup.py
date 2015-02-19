@@ -97,7 +97,7 @@ def writer(t_final, u, writeToFile, i, subdir, method):
         F.close()
 
     # write the solution to a file, but only once!
-    if i == 0:
+    if i == 1:
         G = open('./tests/par-step/solution-p%d.txt' % p, 'r+')
         G.read()
         G.write('%s\n' % str(u))
