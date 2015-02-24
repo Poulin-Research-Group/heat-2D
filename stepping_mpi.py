@@ -10,16 +10,16 @@ for j in range(1, N):
     if 0 < rank:
         comm.Send(u[:, 1].flatten(), dest=rank-1, tag=tags[rank])
 
-    # Receive u[mx+1] to ID+1
+    # Receive u[:, mx+1] to ID+1
     if rank < p-1:
         comm.Recv(col, source=rank+1, tag=tags[rank+1])
         u[:, mx+1] = col
 
-    # Send u[mx] to ID+1
+    # Send u[:, mx] to ID+1
     if rank < p-1:
         comm.Send(u[:, mx].flatten(), dest=rank+1, tag=tags[rank])
 
-    # Receive u[0] to ID-1
+    # Receive u[:, 0] to ID-1
     if 0 < rank:
         comm.Recv(col, source=rank-1, tag=tags[rank-1])
         u[:, 0] = col
