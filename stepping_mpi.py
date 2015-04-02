@@ -1,76 +1,94 @@
 from heat_2d_setup import *
 
-comm.Barrier()         # start MPI timer
-t_start = MPI.Wtime()
 
-# loop through time
-for j in range(1, N):
+# initial condition function
+def f(x, y):
+    # x, y can be arrays
+    return np.sin(np.pi*x) * np.sin(np.pi*y)
 
-    # Send u[:, 1] to ID-1
-    if 0 < rank:
-        comm.Send(u[:, 1].flatten(), dest=rank-1, tag=tags[rank])
 
-    # Receive u[:, mx+1] to ID+1
-    if rank < p-1:
-        comm.Recv(col, source=rank+1, tag=tags[rank+1])
-        u[:, mx+1] = col
+def main(Updater, sc):
+    # number of spatial points
+    Nx = 128*sc
+    Ny = 128*sc
 
-    # Send u[:, mx] to ID+1
-    if rank < p-1:
-        comm.Send(u[:, mx].flatten(), dest=rank+1, tag=tags[rank])
+    rank = comm.Get_rank()   # this process' ID
+    p = comm.Get_size()      # number of processors
+    nx = Nx/p   # x-grid points per process
 
-    # Receive u[:, 0] to ID-1
-    if 0 < rank:
-        comm.Recv(col, source=rank-1, tag=tags[rank-1])
-        u[:, 0] = col
+    # total number of points
+    N = (Nx+2) * (Ny+2)
 
-    un[1:My+1, 1:mx+1] = C*u[1:My+1:, 1:mx+1] + \
-                         Kx*(u[1:My+1:, 0:mx] + u[1:My+1, 2:mx+2]) + \
-                         Ky*(u[0:My,  1:mx+1] + u[2:My+2, 1:mx+1])
+    # x conditions
+    x0 = 0                       # start
+    xf = 1                       # end
+    dx = (xf-x0)/(Nx+1)          # spatial step size
+    # this takes the interval [x0,xf] and splits it equally among all processes
+    x = np.linspace(x0 + rank*(xf-x0)/p, x0 + (rank+1)*(xf-x0)/p, nx+2)
 
-    # Force Boundary Conditions
+    # y conditions
+    y0 = 0
+    yf = 1
+    dy = (yf-y0)/(Ny+1)
+    y  = np.linspace(y0, yf, Ny+2)
+
+    # temporal conditions
+    Nt  = 1000         # time steps
+    t0 = 0            # start
+    tf = 300          # end
+    dt = (tf - t0)/Nt  # time step size
+    t  = np.linspace(t0, tf, Nt)
+
+    # coefficients
+    k  = 0.0002
+    Kx = np.float64(0.02)                # PDE coeff for x terms
+    Ky = np.float64(0.01)
+    C  = 1 - 2*(Kx + Ky)
+
+    # BUILD ZE GRID
+    u   = np.array([f(x, j) for j in y])     # process' slice of soln
+    col = np.empty(Ny+2, dtype='d')
+
+    # define global variables (across all processes)
     if rank == 0:
-        un[:, 0]    = 0.0  # first col
-    elif rank == p-1:
-        un[:, mx+1] = 0.0  # last col
+        xg = np.linspace(x0, xf, Nx+2)
+        ug = np.array([f(xg, j) for j in y])[1:-1, 1:-1].flatten()
+        U  = np.empty((Ny, Nx, Nt), dtype=np.float64)
+        U[:, :, 0] = ug.reshape(Ny, Nx)
+        t  = np.linspace(t0, tf, Nt)
+    else:
+        ug = None
 
-    un[0, :]    = 0.0  # first row
-    un[My+1, :] = 0.0  # last row
+    tags = dict([(j, j+5) for j in xrange(p)])
 
-    # update soln
-    u = un
+    comm.Barrier()         # start MPI timer
+    t_start = MPI.Wtime()
 
-    """
-    # Gather parallel vectors to a serial vector
-    comm.Gather(u[1:My+1, 1:mx+1].flatten(), ug, root=0)
+    # loop through time
+    for j in range(1, Nt):
+
+        u = set_mpi_bdr(u, rank, p, nx, Ny, col, tags)
+        u = Updater(u, nx, Ny, C, Kx, Ky)
+        u = force_BCs(u, rank, p, nx, Ny)
+
+        # Gather parallel vectors to a serial vector
+        comm.Gather(u[1:Ny+1, 1:nx+1].flatten(), ug, root=0)
+        if rank == 0:
+            # evenly split ug into a list of p parts
+            temp = np.array_split(ug, p)
+            # reshape each part
+            temp = [a.reshape(Ny, nx) for a in temp]
+            U[:, :, j] = np.hstack(temp)
+
+    comm.Barrier()
+    t_final = (MPI.Wtime() - t_start)  # stop MPI timer
+
     if rank == 0:
-        # evenly split ug into a list of p parts
-        temp = np.array_split(ug, p)
-        # reshape each part
-        temp = [a.reshape(My, mx) for a in temp]
-        U[:, :, j] = np.hstack(temp)
-    """
+        # PLOTTING
+        animator(U, xg, y, Nt, p)
 
-comm.Barrier()
-t_final = (MPI.Wtime() - t_start)  # stop MPI timer
+    return t_final
 
-print t_final
+    sys.exit()
 
-writer(t_final, u, writeToFile, i, 'original', 'par-step')
-
-sys.exit()
-
-if rank == 0:
-    # PLOTTING
-    fig = plt.figure()
-    ims = []
-    for j in xrange(N):
-        ims.append((plt.pcolormesh(xg[1:-1], y[1:-1], U[:, :, j], norm=plt.Normalize(0, 1)), ))
-
-    print 'done creating meshes, attempting to put them together...'
-    im_ani = animation.ArtistAnimation(fig, ims, interval=50, repeat_delay=3000, blit=False)
-
-    print 'saving...'
-    im_ani.save('stepping_mpi_%d.mp4' % p)
-    # plt.show()
-    print 'saved.'
+main(update_u, 1)

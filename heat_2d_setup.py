@@ -8,97 +8,97 @@ import sys
 from mpi4py import MPI
 import numpy as np
 import time
+import os
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 comm = MPI.COMM_WORLD
 
-np.set_printoptions(threshold=np.inf)  # make sure ENTIRE array is printed
 
-rank = comm.Get_rank()   # this process' ID
-p = comm.Get_size()    # number of processors
+def update_u(u, Nx, Ny, C, Kx, Ky):
+    u[1:Ny+1, 1:Nx+1] = C*u[1:Ny+1, 1:Nx+1] + \
+                        Kx*(u[1:Ny+1, 0:Nx] + u[1:Ny+1, 2:Nx+2]) + \
+                        Ky*(u[0:Ny,  1:Nx+1] + u[2:Ny+2, 1:Nx+1])
 
+    # Force Boundary Conditions
+    u[0, :]    = 0.0  # first row
+    u[Ny+1, :] = 0.0  # last row
+    u[:, 0]    = 0.0  # first col
+    u[:, Nx+1] = 0.0  # last col
 
-# read from STDIN
-if len(sys.argv) > 1:
-    Mx = 2**(int(sys.argv[1]))
-    My = 2**(int(sys.argv[2]))
-    # N = 10**(int(sys.argv[3]))
-    i = int(sys.argv[4])
-    writeToFile = bool(int(sys.argv[5]))
-else:
-    Mx = 256     # total x points (inner)
-    My = 256     # total y points (inner)
-    # N = 10000   # time steps
-    i = None
-    writeToFile = False
-
-mx = Mx/p   # x-grid points per process
-
-# total number of points
-M = (Mx+2) * (My+2)
-
-# x conditions
-x0 = 0                       # start
-xf = 1                       # end
-dx = (xf-x0)/(Mx+1)          # spatial step size
-# this takes the interval [x0,xf] and splits it equally among all processes
-x = np.linspace(x0 + rank*(xf-x0)/p, x0 + (rank+1)*(xf-x0)/p, mx+2)
-
-# y conditions
-y0 = 0
-yf = 1
-dy = (yf-y0)/(My+1)
-y  = np.linspace(y0, yf, My+2)
-
-# temporal conditions
-N  = 1000         # time steps
-t0 = 0            # start
-tf = 300          # end
-dt = (tf - t0)/N  # time step size
-t  = np.linspace(t0, tf, N)
-
-# coefficients
-k  = 0.0002
-Kx = np.float64(0.02)                # PDE coeff for x terms
-Ky = np.float64(0.01)
-C  = 1 - 2*(Kx + Ky)
+    return u
 
 
-# initial condition function
-def f(x, y):
-    # x, y can be arrays
-    return np.sin(np.pi*x) * np.sin(np.pi*y)
+def force_BCs(u, rank, p, nx, Ny):
+    # Force Boundary Conditions
+    if rank == 0:
+        u[:, 0]    = 0.0  # first col
+    elif rank == p-1:
+        u[:, nx+1] = 0.0  # last col
 
-# BUILD ZE GRID
-u   = np.array([f(x, j) for j in y])     # process' slice of soln
-un  = np.empty((My+2, mx+2), dtype='d')  # process' slice of NEW soln
-col = np.empty(My+2, dtype='d')
+    u[0, :]    = 0.0  # first row
+    u[Ny+1, :] = 0.0  # last row
 
-"""
-if rank == 0:
-    xg = np.linspace(x0, xf, Mx+2)
-    ug = np.array([f(xg, j) for j in y])[1:-1, 1:-1].flatten()
-    U  = np.empty((My, Mx, N), dtype=np.float64)
-    U[:, :, 0] = ug.reshape(My, Mx)
-    t  = np.linspace(t0, tf, N)
-else:
-    ug = None
-"""
-
-tags = dict([(j, j+5) for j in xrange(p)])
+    return u
 
 
-def writer(t_final, u, writeToFile, i, subdir, method):
-    if writeToFile:
-        # write time to a file
-        F = open('./tests/%s/%s/p%d-M%s.txt' % (subdir, method, p, str(M).zfill(2)), 'r+')
-        F.read()
-        F.write('%f\n' % t_final)
-        F.close()
+def set_mpi_bdr(u, rank, p, nx, Ny, col, tags):
+    # Send u[:, 1] to ID-1
+    if 0 < rank:
+        comm.Send(u[:, 1].flatten(), dest=rank-1, tag=tags[rank])
 
-    # write the solution to a file, but only once!
-    if i == 1:
-        G = open('./tests/par-step/solution-p%d.txt' % p, 'r+')
-        G.read()
-        G.write('%s\n' % str(u))
-        G.close()
+    # Receive u[:, nx+1] to ID+1
+    if rank < p-1:
+        comm.Recv(col, source=rank+1, tag=tags[rank+1])
+        u[:, nx+1] = col
+
+    # Send u[:, nx] to ID+1
+    if rank < p-1:
+        comm.Send(u[:, nx].flatten(), dest=rank+1, tag=tags[rank])
+
+    # Receive u[:, 0] to ID-1
+    if 0 < rank:
+        comm.Recv(col, source=rank-1, tag=tags[rank-1])
+        u[:, 0] = col
+
+    # Force Boundary Conditions
+    if rank == 0:
+        u[:, 0]    = 0.0  # first col
+    elif rank == p-1:
+        u[:, nx+1] = 0.0  # last col
+
+    u[0, :]    = 0.0  # first row
+    u[Ny+1, :] = 0.0  # last row
+
+    return u
+
+
+def writer(t_total, method, sc, opt=None):
+    if opt:
+        filename = './tests/%s/%s/sc-%d.txt' % (method, opt, sc)
+    else:
+        filename = './tests/%s/sc-%d.txt' % (method, sc)
+
+    # check to see if file exists; if it doesn't, create it.
+    if not os.path.exists(filename):
+        open(filename, 'a').close()
+
+    # write time to the file
+    F = open(filename, 'a')
+    F.write('%f\n' % t_total)
+    F.close()
+
+
+def animator(U, xg, y, Nt, p=1):
+    # PLOTTING
+    fig = plt.figure()
+    ims = []
+    for j in xrange(Nt):
+        ims.append((plt.pcolormesh(xg[1:-1], y[1:-1], U[:, :, j], norm=plt.Normalize(0, 1)), ))
+
+    print 'done creating meshes, attempting to put them together...'
+    im_ani = animation.ArtistAnimation(fig, ims, interval=50, repeat_delay=3000, blit=False)
+
+    print 'saving...'
+    im_ani.save('stepping_mpi_%d.mp4' % p)
+    # plt.show()
+    print 'saved.'
