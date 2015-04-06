@@ -1,4 +1,5 @@
-from heat_2d_setup import *
+from heat_2d_setup import np, sys, MPI, comm, set_mpi_bdr, update_u, force_BCs, \
+                          animator
 
 
 # initial condition function
@@ -34,15 +35,15 @@ def main(Updater, sc):
 
     # temporal conditions
     Nt  = 1000         # time steps
-    t0 = 0            # start
-    tf = 300          # end
+    t0 = 0             # start
+    tf = 300           # end
     dt = (tf - t0)/Nt  # time step size
     t  = np.linspace(t0, tf, Nt)
 
     # coefficients
     k  = 0.0002
-    Kx = np.float64(0.02)                # PDE coeff for x terms
-    Ky = np.float64(0.01)
+    Kx = 0.02                # PDE coeff for x terms
+    Ky = 0.01
     C  = 1 - 2*(Kx + Ky)
 
     # BUILD ZE GRID
