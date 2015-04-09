@@ -1,4 +1,5 @@
-from heat_2d_setup import np, time, calc_u, BCs, writer, animator
+from __future__ import division
+from setup import np, time, calc_u, BCs, writer, animator, heatf, calc_u_numba
 
 
 # initial condition function
@@ -46,15 +47,23 @@ def main(Updater, Force_BCs, sc):
 
     # Loop over time
     for j in range(1, Nt):
-        u = Updater(u, Nx, Ny, C, Kx, Ky)
+        u = Updater(u, C, Kx, Ky)
         u = Force_BCs(u, Nx, Ny)
         U[:, :, j] = u[1:Ny+1, 1:Nx+1]
 
     t_final = time.time()
 
     # PLOTTING ======================================================
-    animator(U, x, y, Nt)
+    if Updater is calc_u:
+        method = 'numpy'
+    elif Updater is calc_u_numba:
+        method = 'numba'
+    elif Updater is heatf:
+        method = 'f2py-f77'
+    animator(U, x, y, Nt, method)
 
     return t_final - t_start
 
-main(calc_u, BCs, 1)
+print main(heatf, BCs, 1)
+print main(calc_u, BCs, 1)
+print main(calc_u_numba, BCs, 1)

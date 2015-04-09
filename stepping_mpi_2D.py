@@ -1,13 +1,6 @@
 from __future__ import division
-from heat_2d_setup import np, sys, MPI, comm, set_mpi_bdr2D, calc_u, \
-                          BCs_MPI_2D, animator_2D
-
-"""
-THIS FUNCTION IS NOT YET WORKING. Only the columns are passed through MPI right
-now. The animation produced at the end doesn't look even close to correct. The
-MPI code only sends columns, not both columns and rows, due to a deadlock issue.
-This will be sorted out tomorrow (April 7th).
-"""
+from setup import np, sys, MPI, comm, set_mpi_bdr2D, calc_u, calc_u_numba, heatf, \
+                  BCs_MPI_2D, animator_2D
 
 
 # initial condition function
@@ -22,7 +15,7 @@ def main(Updater, Force_BCs, sc):
     Ny = 128*sc
 
     rank = comm.Get_rank()   # this process' ID
-    p  = comm.Get_size()     # number of processors
+    p   = comm.Get_size()     # number of processors
     p2 = int(np.sqrt(p))     # number of processors in each direction
     nx = Nx/p2   # x-grid points per process
     ny = Ny/p2   # y-grid points per process
@@ -97,7 +90,7 @@ def main(Updater, Force_BCs, sc):
     for j in range(1, Nt):
         u = set_mpi_bdr2D(u, rank, p, p2, nx, ny, col, row, tagsL, tagsR,
                           tagsU, tagsD, left, right, up, down, locs)
-        u = Updater(u, nx, ny, C, Kx, Ky)
+        u = Updater(u, C, Kx, Ky)
         u = Force_BCs(u, rank, p, p2, nx, ny)
 
         # Gather parallel vectors to a serial vector
@@ -112,12 +105,19 @@ def main(Updater, Force_BCs, sc):
     comm.Barrier()
     t_final = (MPI.Wtime() - t_start)  # stop MPI timer
 
+    # PLOTTING
     if rank == 0:
-        # PLOTTING
-        animator_2D(U, xg, yg, nx, ny, Nt, p, p2)
+        if Updater is calc_u:
+            method = 'numpy'
+        elif Updater is heatf:
+            method = 'f2py-f77'
+        elif Updater is calc_u_numba:
+            method = 'numba'
+        animator_2D(U, xg, yg, nx, ny, Nt, method, p, p2)
 
     return t_final
 
-    sys.exit()
 
 main(calc_u, BCs_MPI_2D, 1)
+main(calc_u_numba, BCs_MPI_2D, 1)
+main(heatf, BCs_MPI_2D, 1)

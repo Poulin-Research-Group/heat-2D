@@ -3,19 +3,45 @@
 
 from __future__ import division
 import sys
-from mpi4py import MPI
 import numpy as np
 import time
 import os
+import numba
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+from heatFortran import heatf
+from mpi4py import MPI
 comm = MPI.COMM_WORLD
 
 
-def calc_u(u, Nx, Ny, C, Kx, Ky):
-    u[1:Ny+1, 1:Nx+1] = C*u[1:Ny+1, 1:Nx+1] + \
-                        Kx*(u[1:Ny+1, 0:Nx] + u[1:Ny+1, 2:Nx+2]) + \
-                        Ky*(u[0:Ny,  1:Nx+1] + u[2:Ny+2, 1:Nx+1])
+def calc_u(u, C, Kx, Ky):
+    u[1:-1, 1:-1] = C*u[1:-1, 1:-1]  + \
+                        Kx*(u[1:-1, 0:-2] + u[1:-1, 2:])   + \
+                        Ky*(u[0:-2, 1:-1] + u[2:,   1:-1])
+    return u
+
+
+@numba.jit('float64[:,:](float64[:,:], float64[:,:])')
+def numba_add(M1, M2):
+    return np.add(M1, M2)
+
+
+@numba.jit('float64[:,:](float64, float64[:,:])')
+def numba_scale(c, M):
+    # multiply M by c
+    return np.multiply(c, M)
+
+
+@numba.jit('float64[:,:](float64[:,:], float64, float64, float64)')
+def calc_u_numba(u, C, Kx, Ky):
+    # I'm sorry
+    u[1:-1, 1:-1] = numba_add(
+                        numba_add(
+                            numba_scale(C, u[1:-1:, 1:-1]),
+                            numba_scale(Kx, numba_add(u[1:-1:, 0:-2], u[1:-1, 2:])),
+                        ),
+                        numba_scale(Ky, numba_add(u[0:-2,  1:-1], u[2:, 1:-1]))
+                    )
     return u
 
 
@@ -151,7 +177,7 @@ def writer(t_total, method, sc, opt=None):
     F.close()
 
 
-def animator(U, xg, yg, Nt, p=1):
+def animator(U, xg, yg, Nt, method, p=1):
     # PLOTTING
     fig = plt.figure()
     ims = []
@@ -162,12 +188,15 @@ def animator(U, xg, yg, Nt, p=1):
     im_ani = animation.ArtistAnimation(fig, ims, interval=50, repeat_delay=3000, blit=False)
 
     print 'saving...'
-    im_ani.save('./anims/stepping_mpi_%d.mp4' % p)
+    if p == 1:
+        im_ani.save('./anims/serial_%s.mp4' % method)
+    else:
+        im_ani.save('./anims/mpi_%s_%dp.mp4' % (method, p))
     # plt.show()
     print 'saved.'
 
 
-def animator_2D(U, xg, yg, nx, ny, Nt, p, p2):
+def animator_2D(U, xg, yg, nx, ny, Nt, method, p, p2):
     fig = plt.figure()
     ims = []
     # plt.pcolormesh(xg[1:-1], yg[1:-1], U[:, :, 0])
@@ -189,5 +218,5 @@ def animator_2D(U, xg, yg, nx, ny, Nt, p, p2):
 
     print 'saving...'
     im_ani = animation.ArtistAnimation(fig, ims, interval=50, repeat_delay=3000, blit=False)
-    im_ani.save('./anims/stepping_mpi_super_%d.mp4' % p)
+    im_ani.save('./anims/mpi_super_%s_%dp.mp4' % (method, p))
     print 'saved.'

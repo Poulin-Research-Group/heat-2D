@@ -1,19 +1,19 @@
-      subroutine heatf(un,u,Nx,Ny,C,Kx,Ky)
+      subroutine heatf(u, Nx, Ny, K, Kx, Ky)
       implicit none
 
-      double precision un(Ny,Nx),u(Ny,Nx)
-      double precision C,Kx,Ky
+      double precision u(0:Ny+1, 0:Nx+1)
+      double precision K, Kx, Ky
+      integer Nx, Ny, r, c
         
-      integer Nx,Ny,i,j
-cf2py intent(in) :: C,Kx,Ky
-cf2py intent(in) :: u
-cf2py intent(in,out) :: un
-cf2py intent(hide) :: Nx,Ny
+cf2py intent(in) :: K, Kx, Ky
+cf2py intent(hide) :: Nx, Ny
+cf2py intent(in,out) :: u
 
-
-      do j=2,Nx-1
-        do i=2,Ny-1
-          un(i,j)=C*u(i,j)+Kx*(u(i+1,j)+u(i-1,j))+Ky*(u(i,j+1)+u(i,j-1))
+      do c=1,Nx
+        do r=1,Ny
+          u(r,c) = K*u(r,c)
+     &           + Kx*(u(r+1, c) + u(r-1, c))
+     &           + Ky*(u(r, c+1) + u(r, c-1))
         enddo
       enddo
 
