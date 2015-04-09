@@ -1,5 +1,6 @@
-from heat_2d_setup import np, sys, MPI, comm, set_mpi_bdr2D, update_u, force_BCs, \
-                          animator_2D
+from __future__ import division
+from heat_2d_setup import np, sys, MPI, comm, set_mpi_bdr2D, update_u, \
+                          force_BCs_2D, animator_2D
 
 """
 THIS FUNCTION IS NOT YET WORKING. Only the columns are passed through MPI right
@@ -45,13 +46,13 @@ def main(Updater, sc):
     xf = 1                  # end
     dx = (xf-x0)/(Nx+1)     # spatial step size
     # this takes the interval [x0,xf] and splits it equally among all processes
-    x = np.linspace(x0 + (rank % p2)*(xf-x0)/p2, x0 + ((rank+1) % p2)*(xf-x0)/p2, nx+2)
+    x = np.linspace(x0 + (rank % p2)*(xf-x0)/p2, x0 + (rank % p2 + 1)*(xf-x0)/p2, nx+2)
 
     # y conditions
     y0 = 0
     yf = 1
     dy = (yf-y0)/(Ny+1)
-    y  = np.linspace(y0 + (rank // p2)*(yf-y0)/p2, y0 + ((rank+1) // p2)*(yf-y0)/p2, ny+2)
+    y  = np.linspace(y0 + (rank // p2)*(yf-y0)/p2, y0 + (rank // p2 + 1)*(yf-y0)/p2, ny+2)
 
     # temporal conditions
     Nt  = 1000         # time steps
@@ -76,9 +77,11 @@ def main(Updater, sc):
         xg = np.linspace(x0, xf, Nx+2)
         yg = np.linspace(y0, yf, Ny+2)
         ug = np.array([f(xg, j) for j in yg])[1:-1, 1:-1].flatten()
-        U  = np.empty((ny, p*nx, Nt), dtype=np.float64)
-        U[:, :, 0] = ug.reshape(ny, p*nx)
-        t  = np.linspace(t0, tf, Nt)
+        temp = np.array_split(ug, p)
+        temp = [a.reshape(ny, nx) for a in temp]
+
+        U = np.empty((ny, p*nx, Nt), dtype=np.float64)
+        U[:, :, 0] = np.hstack(temp)
     else:
         ug = None
 
@@ -92,12 +95,10 @@ def main(Updater, sc):
 
     # loop through time
     for j in range(1, Nt):
-        print 'j = ', j, 'rank =', rank
-
         u = set_mpi_bdr2D(u, rank, p, p2, nx, ny, col, row, tagsL, tagsR,
                           tagsU, tagsD, left, right, up, down, locs)
         u = Updater(u, nx, ny, C, Kx, Ky)
-        # u = force_BCs(u, rank, p, nx, ny)
+        u = force_BCs_2D(u, rank, p, p2, nx, ny)
 
         # Gather parallel vectors to a serial vector
         comm.Gather(u[1:ny+1, 1:nx+1].flatten(), ug, root=0)

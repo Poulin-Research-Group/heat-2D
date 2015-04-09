@@ -1,4 +1,4 @@
-from heat_2d_setup import *
+from heat_2d_setup import np, time, calc_u, BCs, writer, animator
 
 
 # initial condition function
@@ -7,19 +7,15 @@ def f(x, y):
     return np.sin(np.pi*x) * np.sin(np.pi*y)
 
 
-def main(Updater, sc):
+def main(Updater, Force_BCs, sc):
     # number of spatial points
     Nx = 128*sc
     Ny = 128*sc
-
-    # total number of points
-    N = (Nx+2) * (Ny+2)
 
     # x conditions
     x0 = 0                       # start
     xf = 1                       # end
     dx = (xf-x0)/(Nx+1)          # spatial step size
-    # this takes the interval [x0,xf] and splits it equally among all processes
     x = np.linspace(x0, xf, Nx+2)
 
     # y conditions
@@ -36,7 +32,7 @@ def main(Updater, sc):
     t  = np.linspace(t0, tf, Nt)
 
     # coefficients
-    k  = 0.0002
+    # k  = 0.0002
     Kx = np.float64(0.02)                # PDE coeff for x terms
     Ky = np.float64(0.01)
     C  = 1 - 2*(Kx + Ky)
@@ -51,6 +47,7 @@ def main(Updater, sc):
     # Loop over time
     for j in range(1, Nt):
         u = Updater(u, Nx, Ny, C, Kx, Ky)
+        u = Force_BCs(u, Nx, Ny)
         U[:, :, j] = u[1:Ny+1, 1:Nx+1]
 
     t_final = time.time()
@@ -60,4 +57,4 @@ def main(Updater, sc):
 
     return t_final - t_start
 
-main(update_u, 1)
+main(calc_u, BCs, 1)
