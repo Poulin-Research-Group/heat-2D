@@ -1,6 +1,6 @@
 from __future__ import division
-from heat_2d_setup import np, sys, MPI, comm, set_mpi_bdr2D, update_u, \
-                          force_BCs_2D, animator_2D
+from heat_2d_setup import np, sys, MPI, comm, set_mpi_bdr2D, calc_u, \
+                          BCs_MPI_2D, animator_2D
 
 """
 THIS FUNCTION IS NOT YET WORKING. Only the columns are passed through MPI right
@@ -16,7 +16,7 @@ def f(x, y):
     return np.sin(np.pi*x) * np.sin(np.pi*y)
 
 
-def main(Updater, sc):
+def main(Updater, Force_BCs, sc):
     # number of spatial points
     Nx = 128*sc
     Ny = 128*sc
@@ -98,7 +98,7 @@ def main(Updater, sc):
         u = set_mpi_bdr2D(u, rank, p, p2, nx, ny, col, row, tagsL, tagsR,
                           tagsU, tagsD, left, right, up, down, locs)
         u = Updater(u, nx, ny, C, Kx, Ky)
-        u = force_BCs_2D(u, rank, p, p2, nx, ny)
+        u = Force_BCs(u, rank, p, p2, nx, ny)
 
         # Gather parallel vectors to a serial vector
         comm.Gather(u[1:ny+1, 1:nx+1].flatten(), ug, root=0)
@@ -120,4 +120,4 @@ def main(Updater, sc):
 
     sys.exit()
 
-main(update_u, 1)
+main(calc_u, BCs_MPI_2D, 1)
