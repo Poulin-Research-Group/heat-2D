@@ -1,6 +1,6 @@
 from __future__ import division
 from setup import np, sys, MPI, comm, set_mpi_bdr2D, calc_u, calc_u_numba, heatf, \
-                  BCs_MPI_2D, animator_2D
+                  BCs_MPI_2D, animator_2D, set_x_bdr, set_y_bdr, plt
 
 
 # initial condition function
@@ -9,43 +9,61 @@ def f(x, y):
     return np.sin(np.pi*x) * np.sin(np.pi*y)
 
 
-def main(Updater, Force_BCs, sc):
+def main(Updater, Force_BCs, sc=1, px=2, py=2):
     # number of spatial points
     Nx = 128*sc
     Ny = 128*sc
 
-    rank = comm.Get_rank()   # this process' ID
-    p   = comm.Get_size()     # number of processors
-    p2 = int(np.sqrt(p))     # number of processors in each direction
-    nx = Nx/p2   # x-grid points per process
-    ny = Ny/p2   # y-grid points per process
+    # allow user to input number of cores dedicated to x-axis and y-axis,
+    # then check to see if this is more than the actual number of cores
+    p = px * py
+    if p != comm.Get_size():
+        raise Exception("Incorrect number of cores used; MPI is being run with %d, but %d was inputted." % (comm.Get_size(), p))
 
-    indices = [(i, j) for i in xrange(p2) for j in xrange(p2)]
-    procs = np.array_split(np.arange(p), p2)
+    rank = comm.Get_rank()   # this process' ID
+    nx = Nx/px   # x-grid points per process
+    ny = Ny/py   # y-grid points per process
+
+    if px == 1:
+        Set_MPI_Boundaries = set_y_bdr
+    elif py == 1:
+        Set_MPI_Boundaries = set_x_bdr
+    else:
+        Set_MPI_Boundaries = set_mpi_bdr2D
+
+    indices = [(i, j) for i in xrange(py) for j in xrange(px)]
+    procs = list(np.arange(p).reshape(py, px))
     procs.reverse()
-    procs = np.vstack(procs)                      # location of process blocks
+    procs = np.array(procs)                       # location of process blocks
     locs  = dict(zip(procs.flatten(), indices))   # map rank to location
+    loc   = locs[rank]
 
     left  = np.roll(procs, 1,  1)
     right = np.roll(procs, -1, 1)
     up    = np.roll(procs, 1,  0)
     down  = np.roll(procs, -1, 0)
-
-    # total number of points
-    N = (Nx+2) * (Ny+2)
+    rankL = left[loc]
+    rankR = right[loc]
+    rankU = up[loc]
+    rankD = down[loc]
 
     # x conditions
     x0 = 0                  # start
     xf = 1                  # end
     dx = (xf-x0)/(Nx+1)     # spatial step size
     # this takes the interval [x0,xf] and splits it equally among all processes
-    x = np.linspace(x0 + (rank % p2)*(xf-x0)/p2, x0 + (rank % p2 + 1)*(xf-x0)/p2, nx+2)
+    x = np.linspace(x0 + (rank % px)*(xf-x0)/px, x0 + (rank % px + 1)*(xf-x0)/px, nx+2)
 
     # y conditions
     y0 = 0
     yf = 1
     dy = (yf-y0)/(Ny+1)
-    y  = np.linspace(y0 + (rank // p2)*(yf-y0)/p2, y0 + (rank // p2 + 1)*(yf-y0)/p2, ny+2)
+    y  = np.linspace(y0 + (rank // px)*(yf-y0)/py, y0 + (rank // px + 1)*(yf-y0)/py, ny+2)
+    # for i in xrange(p):
+    #     if i == rank:
+    #         print y
+    #     comm.Barrier()
+    # return
 
     # temporal conditions
     Nt  = 1000         # time steps
@@ -82,25 +100,35 @@ def main(Updater, Force_BCs, sc):
     tagsR = dict([(j,   p + (j+1)) for j in xrange(p)])
     tagsU = dict([(j, 2*p + (j+1)) for j in xrange(p)])
     tagsD = dict([(j, 3*p + (j+1)) for j in xrange(p)])
+    tags  = (tagsL, tagsR, tagsU, tagsD)
 
     comm.Barrier()         # start MPI timer
     t_start = MPI.Wtime()
 
     # loop through time
     for j in range(1, Nt):
-        u = set_mpi_bdr2D(u, rank, p, p2, nx, ny, col, row, tagsL, tagsR,
-                          tagsU, tagsD, left, right, up, down, locs)
+        u = Set_MPI_Boundaries(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD, loc)
         u = Updater(u, C, Kx, Ky)
-        u = Force_BCs(u, rank, p, p2, nx, ny)
+        u = Force_BCs(u, rank, p, px, py, nx, ny)
 
         # Gather parallel vectors to a serial vector
-        comm.Gather(u[1:ny+1, 1:nx+1].flatten(), ug, root=0)
+        comm.Gather(u[1:-1, 1:-1].flatten(), ug, root=0)
         if rank == 0:
             # evenly split ug into a list of p parts
             temp = np.array_split(ug, p)
             # reshape each part
             temp = [a.reshape(ny, nx) for a in temp]
             U[:, :, j] = np.hstack(temp)
+
+            U_final = U[:, :, j].reshape(ny, p*nx)
+            temp = [None for i in xrange(py)]
+            for i in xrange(py):
+                temp[i] = U_final[:, i*px*nx : (i+1)*px*nx]
+
+            U_final = np.vstack(temp)
+            plt.pcolormesh(xg[1:-1], yg[1:-1], U_final, norm=plt.Normalize(0, 1))
+            plt.colorbar()
+            plt.show()
 
     comm.Barrier()
     t_final = (MPI.Wtime() - t_start)  # stop MPI timer
@@ -113,11 +141,22 @@ def main(Updater, Force_BCs, sc):
             method = 'f2py-f77'
         elif Updater is calc_u_numba:
             method = 'numba'
-        animator_2D(U, xg, yg, nx, ny, Nt, method, p, p2)
+        # animator_2D(U, xg, yg, nx, ny, Nt, method, p, px, py)
+        U_final = U[:, :, -1].reshape(ny, p*nx)
+        temp = [None for i in xrange(py)]
+        for i in xrange(py):
+            temp[i] = U_final[:, i*px*nx : (i+1)*px*nx]
+
+        U_final = np.vstack(temp)
+        plt.pcolormesh(xg[1:-1], yg[1:-1], U_final, norm=plt.Normalize(0, 1))
+        plt.colorbar()
+        plt.show()
 
     return t_final
 
 
-main(calc_u, BCs_MPI_2D, 1)
-main(calc_u_numba, BCs_MPI_2D, 1)
-main(heatf, BCs_MPI_2D, 1)
+# main(calc_u, BCs_MPI_2D, 1, 2, 2)
+# main(calc_u_numba, BCs_MPI_2D, 1, 2, 2)
+# main(heatf, BCs_MPI_2D, 1, 2, 2)          # px = 2, py = 2
+main(heatf, BCs_MPI_2D, 1, 1, 4)            # px = 1, py = 4
+# main(heatf, BCs_MPI_2D, 1, 4, 1)            # px = 4, py = 1
