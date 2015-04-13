@@ -53,21 +53,34 @@ def BCs(u, Nx, Ny):
     return u
 
 
-def BCs_MPI(u, rank, p, nx, Ny):
-    # Force Boundary Conditions
+def BCs_MPI_X(u, rank, p, px, py):
+    # for runs that are parallelized only in x
     if rank == 0:
-        u[:, 0]    = 0.0  # first col
+        u[:, 0]  = 0.0  # first col
     elif rank == p-1:
-        u[:, nx+1] = 0.0  # last col
+        u[:, -1] = 0.0  # last col
 
-    u[0, :]    = 0.0  # first row
-    u[Ny+1, :] = 0.0  # last row
+    u[0, :]  = 0.0  # first row
+    u[-1, :] = 0.0  # last row
 
     return u
 
 
-def BCs_MPI_2D(u, rank, p, px, py, nx, ny):
-    # Force Boundary Conditions
+def BCs_MPI_Y(u, rank, p, px, py):
+    # for runs that are parallelized only in y
+    if rank == 0:
+        u[-1, :] = 0.0  # last row
+    elif rank == p-1:
+        u[0, :]  = 0.0  # first row
+
+    u[:, 0]  = 0.0  # first col
+    u[:, -1] = 0.0  # last col
+
+    return u
+
+
+def BCs_MPI_XY(u, rank, p, px, py):
+    # for runs parallelized in both x,y
     if rank >= p - px:
         u[0, :]  = 0.0  # first row
     elif rank < px:
@@ -187,8 +200,7 @@ def writer(t_total, method, sc, opt=None):
     F.close()
 
 
-def animator(U, xg, yg, Nt, method, p=1):
-    # PLOTTING
+def animator(U, xg, yg, nx, ny, Nt, method, p=1):
     fig = plt.figure()
     ims = []
     for j in xrange(Nt):
@@ -202,14 +214,44 @@ def animator(U, xg, yg, Nt, method, p=1):
         im_ani.save('./anims/serial_%s.mp4' % method)
     else:
         im_ani.save('./anims/mpi_%s_%dp.mp4' % (method, p))
-    # plt.show()
     print 'saved.'
 
 
-def animator_2D(U, xg, yg, nx, ny, Nt, method, p, px, py):
+def animator_y(U, xg, yg, nx, ny, Nt, method, p, px, py):
     fig = plt.figure()
     ims = []
-    print 'creating meshes...'
+    for j in xrange(Nt):
+        U_j = np.vstack([arr.transpose() for arr in np.array_split(U[:, :, j].transpose(), p)])
+        ims.append((plt.pcolormesh(xg[1:-1], yg[1:-1], U_j, norm=plt.Normalize(0, 1)), ))
+
+    print 'done creating meshes, attempting to put them together...'
+    im_ani = animation.ArtistAnimation(fig, ims, interval=50, repeat_delay=3000, blit=False)
+
+    print 'saving...'
+    if p == 1:
+        im_ani.save('./anims/serial_%s.mp4' % method)
+    else:
+        im_ani.save('./anims/mpi_%s_%dp.mp4' % (method, p))
+    print 'saved.'
+
+
+def get_ims_x(U, xg, yg, Nt):
+    ims = []
+    for j in xrange(Nt):
+        ims.append((plt.pcolormesh(xg[1:-1], yg[1:-1], U[:, :, j], norm=plt.Normalize(0, 1)), ))
+    return ims
+
+
+def get_ims_y(U, xg, yg, Nt, p):
+    ims = []
+    for j in xrange(Nt):
+        U_j = np.vstack([arr.transpose() for arr in np.array_split(U[:, :, j].transpose(), p)])
+        ims.append((plt.pcolormesh(xg[1:-1], yg[1:-1], U_j, norm=plt.Normalize(0, 1)), ))
+    return ims
+
+
+def get_ims_xy(U, xg, yg, nx, ny, Nt, p, px, py):
+    ims = []
     for j in xrange(Nt):
         U_j = U[:, :, j].reshape(ny, p*nx)
         temp = [None for i in xrange(py)]
@@ -218,8 +260,19 @@ def animator_2D(U, xg, yg, nx, ny, Nt, method, p, px, py):
 
         U_j = np.vstack(temp)
         ims.append((plt.pcolormesh(xg[1:-1], yg[1:-1], U_j, norm=plt.Normalize(0, 1)), ))
-    print 'done creating meshes, attempting to put them together...'
+    return ims
 
+
+def The_Animator(U, xg, yg, nx, ny, Nt, method, p, px, py):
+    fig = plt.figure()
+    print 'creating meshes...'
+    if px == 1:
+        ims = get_ims_y(U, xg, yg, Nt, p)
+    elif py == 1:
+        ims = get_ims_x(U, xg, yg, Nt)
+    else:
+        ims = get_ims_xy(U, xg, yg, nx, ny, Nt, p, px, py)
+    print 'done creating meshes, attempting to put them together...'
     print 'saving...'
     im_ani = animation.ArtistAnimation(fig, ims, interval=50, repeat_delay=3000, blit=False)
     im_ani.save('./anims/MPI_SUPER_%s_%dpx_%dpy.mp4' % (method, px, py))

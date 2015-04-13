@@ -1,6 +1,7 @@
 from __future__ import division
 from setup import np, sys, MPI, comm, set_mpi_bdr2D, calc_u, calc_u_numba, heatf, \
-                  BCs_MPI_2D, animator_2D, set_x_bdr, set_y_bdr, plt
+                  BCs_MPI_X, BCs_MPI_Y, BCs_MPI_XY, The_Animator, set_x_bdr,        \
+                  set_y_bdr, plt
 
 
 # initial condition function
@@ -9,7 +10,7 @@ def f(x, y):
     return np.sin(np.pi*x) * np.sin(np.pi*y)
 
 
-def main(Updater, Force_BCs, sc=1, px=2, py=2):
+def main(Updater, sc=1, px=2, py=2):
     # number of spatial points
     Nx = 128*sc
     Ny = 128*sc
@@ -26,10 +27,13 @@ def main(Updater, Force_BCs, sc=1, px=2, py=2):
 
     if px == 1:
         Set_MPI_Boundaries = set_y_bdr
+        Force_BCs = BCs_MPI_Y
     elif py == 1:
         Set_MPI_Boundaries = set_x_bdr
+        Force_BCs = BCs_MPI_X
     else:
         Set_MPI_Boundaries = set_mpi_bdr2D
+        Force_BCs = BCs_MPI_XY
 
     indices = [(i, j) for i in xrange(py) for j in xrange(px)]
     procs = list(np.arange(p).reshape(py, px))
@@ -109,7 +113,7 @@ def main(Updater, Force_BCs, sc=1, px=2, py=2):
     for j in range(1, Nt):
         u = Set_MPI_Boundaries(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD, loc)
         u = Updater(u, C, Kx, Ky)
-        u = Force_BCs(u, rank, p, px, py, nx, ny)
+        u = Force_BCs(u, rank, p, px, py)
 
         # Gather parallel vectors to a serial vector
         comm.Gather(u[1:-1, 1:-1].flatten(), ug, root=0)
@@ -126,6 +130,7 @@ def main(Updater, Force_BCs, sc=1, px=2, py=2):
                 temp[i] = U_final[:, i*px*nx : (i+1)*px*nx]
 
             U_final = np.vstack(temp)
+            plt.title('time step: ' + str(j))
             plt.pcolormesh(xg[1:-1], yg[1:-1], U_final, norm=plt.Normalize(0, 1))
             plt.colorbar()
             plt.show()
@@ -141,22 +146,22 @@ def main(Updater, Force_BCs, sc=1, px=2, py=2):
             method = 'f2py-f77'
         elif Updater is calc_u_numba:
             method = 'numba'
-        # animator_2D(U, xg, yg, nx, ny, Nt, method, p, px, py)
-        U_final = U[:, :, -1].reshape(ny, p*nx)
-        temp = [None for i in xrange(py)]
-        for i in xrange(py):
-            temp[i] = U_final[:, i*px*nx : (i+1)*px*nx]
+        The_Animator(U, xg, yg, nx, ny, Nt, method, p, px, py)
+        # U_final = U[:, :, -1].reshape(ny, p*nx)
+        # temp = [None for i in xrange(py)]
+        # for i in xrange(py):
+        #     temp[i] = U_final[:, i*px*nx : (i+1)*px*nx]
 
-        U_final = np.vstack(temp)
-        plt.pcolormesh(xg[1:-1], yg[1:-1], U_final, norm=plt.Normalize(0, 1))
-        plt.colorbar()
-        plt.show()
+        # U_final = np.vstack(temp)
+        # plt.pcolormesh(xg[1:-1], yg[1:-1], U_final, norm=plt.Normalize(0, 1))
+        # plt.colorbar()
+        # plt.show()
 
     return t_final
 
 
-# main(calc_u, BCs_MPI_2D, 1, 2, 2)
-# main(calc_u_numba, BCs_MPI_2D, 1, 2, 2)
-# main(heatf, BCs_MPI_2D, 1, 2, 2)          # px = 2, py = 2
-main(heatf, BCs_MPI_2D, 1, 1, 4)            # px = 1, py = 4
-# main(heatf, BCs_MPI_2D, 1, 4, 1)            # px = 4, py = 1
+# main(calc_u, 1, 2, 2)
+# main(calc_u_numba, 1, 2, 2)
+# main(heatf, 1, 2, 2)          # px = 2, py = 2
+main(heatf, 1, 1, 4)          # px = 1, py = 4
+# main(heatf, 1, 4, 1)          # px = 4, py = 1
