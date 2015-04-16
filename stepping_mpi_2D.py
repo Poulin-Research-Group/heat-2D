@@ -1,7 +1,8 @@
 from __future__ import division
 from setup import np, sys, MPI, comm, set_mpi_bdr2D, calc_u, heatf, calc_u_numba,  \
                   BCs_X, BCs_Y, BCs_XY, The_Animator, set_x_bdr, set_y_bdr, plt,    \
-                  create_x, create_y, serial_bdr, BCs, heatf90
+                  create_x, create_y, serial_bdr, BCs, heatf90, writer, METHODS,     \
+                  UPDATERS
 
 
 # initial condition function
@@ -124,22 +125,31 @@ def main(Updater, sc=1, px=2, py=2):
     comm.Barrier()
     t_final = (MPI.Wtime() - t_start)  # stop MPI timer
 
-    # PLOTTING
+    # PLOTTING AND SAVING SOLUTION
     if rank == 0:
         if Updater is calc_u:
             method = 'numpy'
         elif Updater is heatf:
             method = 'f2py-f77'
+        elif Updater is heatf90:
+            method = 'f2py-f90'
         elif Updater is calc_u_numba:
             method = 'numba'
-        The_Animator(U, xg, yg, nx, ny, Nt, method, p, px, py)
+        # The_Animator(U, xg, yg, nx, ny, Nt, method, p, px, py)
+
+        writer(t_final, method, sc)
+        print t_final
 
     return t_final
 
 
-# main(calc_u, 1, 2, 2)
-# main(calc_u_numba, 1, 2, 2)
-# main(heatf, 1, 2, 2)          # px = 2, py = 2
-# main(heatf, 1, 1, 4)          # px = 1, py = 4
-# main(heatf, 1, 4, 1)          # px = 4, py = 1
-main(heatf, 1, 1, 1)
+if len(sys.argv) > 1:
+    get_updater = dict(zip(METHODS, UPDATERS))
+
+    argv = sys.argv[1:]
+    updater = get_updater[argv[0]]
+    sc   = int(argv[1])
+    px   = int(argv[2])
+    py   = int(argv[3])
+
+    main(updater, sc, px, py)
