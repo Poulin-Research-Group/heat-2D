@@ -1,7 +1,7 @@
 from __future__ import division
 from setup import np, sys, MPI, comm, set_mpi_bdr2D, calc_u, heatf, calc_u_numba,  \
                   BCs_X, BCs_Y, BCs_XY, The_Animator, set_x_bdr, set_y_bdr, plt,    \
-                  create_x, create_y
+                  create_x, create_y, serial_bdr, BCs, heatf90
 
 
 # initial condition function
@@ -25,7 +25,10 @@ def main(Updater, sc=1, px=2, py=2):
     nx = Nx/px   # x-grid points per process
     ny = Ny/py   # y-grid points per process
 
-    if px == 1:
+    if px == 1 and py == 1:
+        Set_MPI_Boundaries = serial_bdr
+        Force_BCs = BCs
+    elif px == 1:
         Set_MPI_Boundaries = set_y_bdr
         Force_BCs = BCs_X
     elif py == 1:
@@ -137,5 +140,6 @@ def main(Updater, sc=1, px=2, py=2):
 # main(calc_u, 1, 2, 2)
 # main(calc_u_numba, 1, 2, 2)
 # main(heatf, 1, 2, 2)          # px = 2, py = 2
-main(heatf, 1, 1, 4)          # px = 1, py = 4
+# main(heatf, 1, 1, 4)          # px = 1, py = 4
 # main(heatf, 1, 4, 1)          # px = 4, py = 1
+main(heatf, 1, 1, 1)

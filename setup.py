@@ -10,6 +10,7 @@ import numba
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from heatFortran import heatf
+from heatFortran90 import heatf as heatf90
 from mpi4py import MPI
 comm = MPI.COMM_WORLD
 
@@ -59,11 +60,11 @@ def calc_u_numba(u, C, Kx, Ky):
     return u
 
 
-def BCs(u, Nx, Ny):
-    u[ 0, :] = 0.0  # first row
-    u[-1, :] = 0.0  # last row
-    u[:,  0] = 0.0  # first col
-    u[:, -1] = 0.0  # last col
+def BCs(u, rank, p, px, py):
+    u[ 0, :] = u[-2, :]  # first row
+    u[-1, :] = u[ 1, :]  # last row
+    u[:,  0] = u[:, -2]  # first col
+    u[:, -1] = u[:,  1]  # last col
     return u
 
 
