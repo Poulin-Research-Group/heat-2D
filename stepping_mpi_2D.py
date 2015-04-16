@@ -36,9 +36,7 @@ def main(Updater, sc=1, px=2, py=2):
         Force_BCs = BCs_XY
 
     indices = [(i, j) for i in xrange(py) for j in xrange(px)]
-    procs = list(np.arange(p).reshape(py, px))
-    procs.reverse()
-    procs = np.array(procs)                       # location of process blocks
+    procs = np.arange(p).reshape(py, px)
     locs  = dict(zip(procs.flatten(), indices))   # map rank to location
     loc   = locs[rank]
 
@@ -78,15 +76,16 @@ def main(Updater, sc=1, px=2, py=2):
     C  = 1 - 2*(Kx + Ky)
 
     # BUILD ZE GRID
-    u   = np.array([f(x, j) for j in y[::-1]])     # process' slice of soln
+    xx, yy = np.meshgrid(x, y)
+    u   = f(xx, yy)
     col = np.empty(ny+2, dtype='d')
     row = np.empty(nx+2, dtype='d')
 
     # define global variables (across all processes)
     if rank == 0:
-        xg = np.linspace(x0, xf, Nx+2)
-        yg = np.linspace(y0, yf, Ny+2)
-        ug = np.array([f(xg, j) for j in yg[::-1]])[1:-1, 1:-1].flatten()
+        xg = np.linspace(x0 - dx/2, xf + dx/2, Nx+2)
+        yg = np.linspace(y0 - dy/2, yf + dy/2, Ny+2)
+        ug = np.array([f(xg, j) for j in yg])[1:-1, 1:-1].flatten()
         temp = np.array_split(ug, p)
         temp = [a.reshape(ny, nx) for a in temp]
 

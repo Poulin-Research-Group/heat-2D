@@ -67,14 +67,6 @@ def BCs(u, Nx, Ny):
     return u
 
 
-def BCs_Y(u, rank, p, px, py):
-    # set Y boundary conditions (rows)
-    u[ 0, :] = u[-2, :]   # first row
-    u[-1, :] = u[ 1, :]   # last row
-
-    return u
-
-
 def BCs_X(u, rank, p, px, py):
     # set X boundary conditions (cols)
     u[:,  0] = u[:, -2]  # first col
@@ -83,10 +75,23 @@ def BCs_X(u, rank, p, px, py):
     return u
 
 
+def BCs_Y(u, rank, p, px, py):
+    # set Y boundary conditions (rows)
+    u[ 0, :] = u[-2, :]   # first row
+    u[-1, :] = u[ 1, :]   # last row
+
+    return u
+
+
 def BCs_XY(u, rank, p, px, py):
     # place holder to do nothing, as periodic BCs are already put in place via
     # MPI functions
+    return u
 
+
+def serial_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD):
+    # placeholder to do nothing, as serial solutions have the periodic BCs set
+    # via the BCs function
     return u
 
 
@@ -127,18 +132,17 @@ def set_y_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD):
 
     # Send odd-numbered rows
     if row_block % 2:
-        comm.Send(u[1, :].flatten(),  dest=rankU, tag=tagsU[rank])
+        comm.Send(u[ 1, :].flatten(), dest=rankU, tag=tagsU[rank])
         comm.Send(u[-2, :].flatten(), dest=rankD, tag=tagsD[rank])
 
     # Receive odd-numbered rows, send even-numbered rows
     else:
         comm.Recv(row, source=rankD, tag=tagsU[rankD])    # row from below
         u[-1, :] = row
-        print row
         comm.Recv(row, source=rankU, tag=tagsD[rankU])    # row from above
         u[0, :]  = row
 
-        comm.Send(u[1, :].flatten(),  dest=rankU, tag=tagsU[rank])
+        comm.Send(u[ 1, :].flatten(), dest=rankU, tag=tagsU[rank])
         comm.Send(u[-2, :].flatten(), dest=rankD, tag=tagsD[rank])
 
     # Receive even-numbered rows
@@ -175,43 +179,6 @@ def writer(t_total, method, sc, opt=None):
     F.close()
 
 
-def animator(U, xg, yg, nx, ny, Nt, method, p=1):
-    fig = plt.figure()
-    ims = []
-    for j in xrange(Nt):
-        ims.append((plt.pcolormesh(xg[1:-1], yg[1:-1], U[:, :, j], norm=plt.Normalize(0, 1)), ))
-
-    print 'done creating meshes, attempting to put them together...'
-    im_ani = animation.ArtistAnimation(fig, ims, interval=50, repeat_delay=3000, blit=False)
-
-    print 'saving...'
-    if p == 1:
-        im_ani.save('./anims/serial_%s.mp4' % method)
-    else:
-        im_ani.save('./anims/mpi_%s_%dp.mp4' % (method, p))
-    print 'saved.'
-
-
-def animator_y(U, xg, yg, nx, ny, Nt, method, p, px, py):
-    fig = plt.figure()
-    ims = []
-    for j in xrange(Nt):
-        U_j = [arr.transpose() for arr in np.array_split(U[:, :, j].transpose(), p)]
-        U_j.reverse()
-        U_j = np.vstack(U_j)
-        ims.append((plt.pcolormesh(xg[1:-1], yg[1:-1], U_j, norm=plt.Normalize(0, 1)), ))
-
-    print 'done creating meshes, attempting to put them together...'
-    im_ani = animation.ArtistAnimation(fig, ims, interval=50, repeat_delay=3000, blit=False)
-
-    print 'saving...'
-    if p == 1:
-        im_ani.save('./anims/serial_%s.mp4' % method)
-    else:
-        im_ani.save('./anims/mpi_%s_%dp.mp4' % (method, p))
-    print 'saved.'
-
-
 def get_ims_x(U, xg, yg, Nt):
     ims = []
     for j in xrange(Nt):
@@ -222,9 +189,7 @@ def get_ims_x(U, xg, yg, Nt):
 def get_ims_y(U, xg, yg, Nt, p):
     ims = []
     for j in xrange(Nt):
-        U_j = [arr.transpose() for arr in np.array_split(U[:, :, j].transpose(), p)]
-        U_j.reverse()
-        U_j = np.vstack(U_j)
+        U_j = np.vstack([arr.transpose() for arr in np.array_split(U[:, :, j].transpose(), p)])
         ims.append((plt.pcolormesh(xg[1:-1], yg[1:-1], U_j, norm=plt.Normalize(0, 1)), ))
     return ims
 
