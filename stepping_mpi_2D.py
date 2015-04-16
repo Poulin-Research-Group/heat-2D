@@ -1,7 +1,7 @@
 from __future__ import division
-from setup import np, sys, MPI, comm, set_mpi_bdr2D, calc_u, calc_u_numba, heatf, \
-                  BCs_MPI_X, BCs_MPI_Y, BCs_MPI_XY, The_Animator, set_x_bdr,        \
-                  set_y_bdr, plt
+from setup import np, sys, MPI, comm, set_mpi_bdr2D, calc_u, heatf, calc_u_numba,  \
+                  BCs_X, BCs_Y, BCs_XY, The_Animator, set_x_bdr, set_y_bdr, plt,    \
+                  create_x, create_y
 
 
 # initial condition function
@@ -27,13 +27,13 @@ def main(Updater, sc=1, px=2, py=2):
 
     if px == 1:
         Set_MPI_Boundaries = set_y_bdr
-        Force_BCs = BCs_MPI_Y
+        Force_BCs = BCs_X
     elif py == 1:
         Set_MPI_Boundaries = set_x_bdr
-        Force_BCs = BCs_MPI_X
+        Force_BCs = BCs_Y
     else:
         Set_MPI_Boundaries = set_mpi_bdr2D
-        Force_BCs = BCs_MPI_XY
+        Force_BCs = BCs_XY
 
     indices = [(i, j) for i in xrange(py) for j in xrange(px)]
     procs = list(np.arange(p).reshape(py, px))
@@ -42,9 +42,9 @@ def main(Updater, sc=1, px=2, py=2):
     locs  = dict(zip(procs.flatten(), indices))   # map rank to location
     loc   = locs[rank]
 
-    left  = np.roll(procs, 1,  1)
+    left  = np.roll(procs,  1, 1)
     right = np.roll(procs, -1, 1)
-    up    = np.roll(procs, 1,  0)
+    up    = np.roll(procs,  1, 0)
     down  = np.roll(procs, -1, 0)
     rankL = left[loc]
     rankR = right[loc]
@@ -56,18 +56,13 @@ def main(Updater, sc=1, px=2, py=2):
     xf = 1                  # end
     dx = (xf-x0)/(Nx+1)     # spatial step size
     # this takes the interval [x0,xf] and splits it equally among all processes
-    x = np.linspace(x0 + (rank % px)*(xf-x0)/px, x0 + (rank % px + 1)*(xf-x0)/px, nx+2)
+    x = create_x(px, rank, x0, xf, dx, nx, Nx)
 
     # y conditions
     y0 = 0
     yf = 1
     dy = (yf-y0)/(Ny+1)
-    y  = np.linspace(y0 + (rank // px)*(yf-y0)/py, y0 + (rank // px + 1)*(yf-y0)/py, ny+2)
-    # for i in xrange(p):
-    #     if i == rank:
-    #         print y
-    #     comm.Barrier()
-    # return
+    y = create_y(px, py, rank, y0, yf, dy, ny, Ny)
 
     # temporal conditions
     Nt  = 1000         # time steps
@@ -83,7 +78,7 @@ def main(Updater, sc=1, px=2, py=2):
     C  = 1 - 2*(Kx + Ky)
 
     # BUILD ZE GRID
-    u   = np.array([f(x, j) for j in y])     # process' slice of soln
+    u   = np.array([f(x, j) for j in y[::-1]])     # process' slice of soln
     col = np.empty(ny+2, dtype='d')
     row = np.empty(nx+2, dtype='d')
 
@@ -91,7 +86,7 @@ def main(Updater, sc=1, px=2, py=2):
     if rank == 0:
         xg = np.linspace(x0, xf, Nx+2)
         yg = np.linspace(y0, yf, Ny+2)
-        ug = np.array([f(xg, j) for j in yg])[1:-1, 1:-1].flatten()
+        ug = np.array([f(xg, j) for j in yg[::-1]])[1:-1, 1:-1].flatten()
         temp = np.array_split(ug, p)
         temp = [a.reshape(ny, nx) for a in temp]
 
@@ -111,7 +106,7 @@ def main(Updater, sc=1, px=2, py=2):
 
     # loop through time
     for j in range(1, Nt):
-        u = Set_MPI_Boundaries(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD, loc)
+        u = Set_MPI_Boundaries(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD)
         u = Updater(u, C, Kx, Ky)
         u = Force_BCs(u, rank, p, px, py)
 
@@ -123,17 +118,6 @@ def main(Updater, sc=1, px=2, py=2):
             # reshape each part
             temp = [a.reshape(ny, nx) for a in temp]
             U[:, :, j] = np.hstack(temp)
-
-            U_final = U[:, :, j].reshape(ny, p*nx)
-            temp = [None for i in xrange(py)]
-            for i in xrange(py):
-                temp[i] = U_final[:, i*px*nx : (i+1)*px*nx]
-
-            U_final = np.vstack(temp)
-            plt.title('time step: ' + str(j))
-            plt.pcolormesh(xg[1:-1], yg[1:-1], U_final, norm=plt.Normalize(0, 1))
-            plt.colorbar()
-            plt.show()
 
     comm.Barrier()
     t_final = (MPI.Wtime() - t_start)  # stop MPI timer
@@ -147,15 +131,6 @@ def main(Updater, sc=1, px=2, py=2):
         elif Updater is calc_u_numba:
             method = 'numba'
         The_Animator(U, xg, yg, nx, ny, Nt, method, p, px, py)
-        # U_final = U[:, :, -1].reshape(ny, p*nx)
-        # temp = [None for i in xrange(py)]
-        # for i in xrange(py):
-        #     temp[i] = U_final[:, i*px*nx : (i+1)*px*nx]
-
-        # U_final = np.vstack(temp)
-        # plt.pcolormesh(xg[1:-1], yg[1:-1], U_final, norm=plt.Normalize(0, 1))
-        # plt.colorbar()
-        # plt.show()
 
     return t_final
 

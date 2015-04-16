@@ -1,5 +1,5 @@
 from __future__ import division
-from setup import np, sys, MPI, comm, set_mpi_bdr, calc_u, BCs, BCs_MPI, \
+from setup import np, sys, MPI, comm, set_x_bdr, calc_u, BCs_Y, \
                   animator, heatf, calc_u_numba
 
 
@@ -9,17 +9,16 @@ def f(x, y):
     return np.sin(np.pi*x) * np.sin(np.pi*y)
 
 
-def main(Updater, Force_BCs, sc):
+def main(Updater, sc):
     # number of spatial points
     Nx = 128*sc
     Ny = 128*sc
 
-    rank = comm.Get_rank()   # this process' ID
-    p = comm.Get_size()      # number of processors
+    p  = comm.Get_size()     # number of processors
     nx = Nx/p   # x-grid points per process
-
-    # total number of points
-    N = (Nx+2) * (Ny+2)
+    rank  = comm.Get_rank()   # this process' ID
+    rankL = (rank - 1) % p
+    rankR = (rank + 1) % p
 
     # x conditions
     x0 = 0                       # start
@@ -57,11 +56,12 @@ def main(Updater, Force_BCs, sc):
         ug = np.array([f(xg, j) for j in y])[1:-1, 1:-1].flatten()
         U  = np.empty((Ny, Nx, Nt), dtype=np.float64)
         U[:, :, 0] = ug.reshape(Ny, Nx)
-        t  = np.linspace(t0, tf, Nt)
     else:
         ug = None
 
-    tags = dict([(j, j+5) for j in xrange(p)])
+    tagsL = dict([(j, j+1) for j in xrange(p)])
+    tagsR = dict([(j,   p + (j+1)) for j in xrange(p)])
+    tags  = (tagsL, tagsR, None, None)
 
     comm.Barrier()         # start MPI timer
     t_start = MPI.Wtime()
@@ -69,9 +69,9 @@ def main(Updater, Force_BCs, sc):
     # loop through time
     for j in range(1, Nt):
 
-        u = set_mpi_bdr(u, rank, p, nx, Ny, col, tags)
+        u = set_x_bdr(u, rank, p, 0, col, None, tags, rankL, rankR, None, None)
         u = Updater(u, C, Kx, Ky)
-        u = Force_BCs(u, rank, p, nx, Ny)
+        u = BCs_Y(u, rank, p, None, None)
 
         # Gather parallel vectors to a serial vector
         comm.Gather(u[1:Ny+1, 1:nx+1].flatten(), ug, root=0)
@@ -93,12 +93,12 @@ def main(Updater, Force_BCs, sc):
             method = 'f2py-f77'
         elif Updater is calc_u_numba:
             method = 'numba'
-        animator(U, xg, y, Nt, method, p)
+        animator(U, xg, y, nx, Ny, Nt, method, p)
 
     return t_final
 
     sys.exit()
 
-main(calc_u, BCs_MPI, 1)
-main(calc_u_numba, BCs_MPI, 1)
-main(heatf, BCs_MPI, 1)
+main(calc_u, 1)
+main(calc_u_numba, 1)
+main(heatf, 1)

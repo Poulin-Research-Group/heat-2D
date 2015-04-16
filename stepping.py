@@ -17,13 +17,13 @@ def main(Updater, Force_BCs, sc):
     x0 = 0                       # start
     xf = 1                       # end
     dx = (xf-x0)/(Nx+1)          # spatial step size
-    x = np.linspace(x0, xf, Nx+2)
+    x = np.linspace(x0 - dx/2, xf + dx/2, Nx+2)
 
     # y conditions
     y0 = 0
     yf = 1
     dy = (yf-y0)/(Ny+1)
-    y  = np.linspace(y0, yf, Ny+2)
+    y  = np.linspace(y0 - dy/2, yf + dy/2, Ny+2)
 
     # temporal conditions
     Nt = 1000
@@ -65,5 +65,6 @@ def main(Updater, Force_BCs, sc):
     return t_final - t_start
 
 print main(heatf, BCs, 1)
-print main(calc_u, BCs, 1)
+print main(calc_u, BCS, 1)
 print main(calc_u_numba, BCs, 1)
+

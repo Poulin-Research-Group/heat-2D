@@ -14,10 +14,24 @@ from mpi4py import MPI
 comm = MPI.COMM_WORLD
 
 
+def create_x(px, rank, x0, xf, dx, nx, Nx):
+    col = rank % px
+    xg = np.linspace(x0 - dx/2, xf + dx/2, Nx+2)
+    x  = list(np.array_split(xg[1:-1], px)[col])
+    return np.array([xg[col*nx]] + x + [xg[(col+1)*nx + 1]])
+
+
+def create_y(px, py, rank, y0, yf, dy, ny, Ny):
+    row = rank // px
+    yg = np.linspace(y0 - dy/2, yf + dy/2, Ny+2)
+    y  = list(np.array_split(yg[1:-1], py)[row])
+    return np.array([yg[row*ny]] + y + [yg[(row+1)*ny + 1]])
+
+
 def calc_u(u, C, Kx, Ky):
     u[1:-1, 1:-1] = C*u[1:-1, 1:-1]  + \
-                        Kx*(u[1:-1, 0:-2] + u[1:-1, 2:])   + \
-                        Ky*(u[0:-2, 1:-1] + u[2:,   1:-1])
+                        Kx*(u[1:-1, 0:-2] + u[1:-1, 2:])  + \
+                        Ky*(u[0:-2, 1:-1] + u[2:, 1:-1])
     return u
 
 
@@ -46,77 +60,37 @@ def calc_u_numba(u, C, Kx, Ky):
 
 
 def BCs(u, Nx, Ny):
-    u[0, :]    = 0.0  # first row
-    u[Ny+1, :] = 0.0  # last row
-    u[:, 0]    = 0.0  # first col
-    u[:, Nx+1] = 0.0  # last col
-    return u
-
-
-def BCs_MPI_X(u, rank, p, px, py):
-    # for runs that are parallelized only in x
-    if rank == 0:
-        u[:, 0]  = 0.0  # first col
-    elif rank == p-1:
-        u[:, -1] = 0.0  # last col
-
-    u[0, :]  = 0.0  # first row
+    u[ 0, :] = 0.0  # first row
     u[-1, :] = 0.0  # last row
-
-    return u
-
-
-def BCs_MPI_Y(u, rank, p, px, py):
-    # for runs that are parallelized only in y
-    if rank == 0:
-        u[-1, :] = 0.0  # last row
-    elif rank == p-1:
-        u[0, :]  = 0.0  # first row
-
-    u[:, 0]  = 0.0  # first col
+    u[:,  0] = 0.0  # first col
     u[:, -1] = 0.0  # last col
+    return u
+
+
+def BCs_Y(u, rank, p, px, py):
+    # set Y boundary conditions (rows)
+    u[ 0, :] = u[-2, :]   # first row
+    u[-1, :] = u[ 1, :]   # last row
 
     return u
 
 
-def BCs_MPI_XY(u, rank, p, px, py):
-    # for runs parallelized in both x,y
-    if rank >= p - px:
-        u[0, :]  = 0.0  # first row
-    elif rank < px:
-        u[-1, :] = 0.0  # last row
-
-    if not rank % px:
-        u[:, 0]  = 0.0  # first col
-    elif rank % px == px - 1:
-        u[:, -1] = 0.0  # last col
+def BCs_X(u, rank, p, px, py):
+    # set X boundary conditions (cols)
+    u[:,  0] = u[:, -2]  # first col
+    u[:, -1] = u[:,  1]  # last col
 
     return u
 
 
-def set_mpi_bdr(u, rank, p, nx, Ny, col, tags):
-    # Send u[:, 1] to ID-1
-    if 0 < rank:
-        comm.Send(u[:, 1].flatten(), dest=rank-1, tag=tags[rank])
-
-    # Receive u[:, nx+1] to ID+1
-    if rank < p-1:
-        comm.Recv(col, source=rank+1, tag=tags[rank+1])
-        u[:, nx+1] = col
-
-    # Send u[:, nx] to ID+1
-    if rank < p-1:
-        comm.Send(u[:, nx].flatten(), dest=rank+1, tag=tags[rank])
-
-    # Receive u[:, 0] to ID-1
-    if 0 < rank:
-        comm.Recv(col, source=rank-1, tag=tags[rank-1])
-        u[:, 0] = col
+def BCs_XY(u, rank, p, px, py):
+    # place holder to do nothing, as periodic BCs are already put in place via
+    # MPI functions
 
     return u
 
 
-def set_x_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD, loc):
+def set_x_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD):
     # Sends columns.
     tagsL, tagsR, tagsU, tagsD = tags
     col_block = rank % px
@@ -146,7 +120,7 @@ def set_x_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD, loc):
     return u
 
 
-def set_y_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD, loc):
+def set_y_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD):
     # Sends rows
     tagsL, tagsR, tagsU, tagsD = tags
     row_block = rank // px
@@ -160,6 +134,7 @@ def set_y_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD, loc):
     else:
         comm.Recv(row, source=rankD, tag=tagsU[rankD])    # row from below
         u[-1, :] = row
+        print row
         comm.Recv(row, source=rankU, tag=tagsD[rankU])    # row from above
         u[0, :]  = row
 
@@ -176,10 +151,10 @@ def set_y_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD, loc):
     return u
 
 
-def set_mpi_bdr2D(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD, loc):
+def set_mpi_bdr2D(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD):
     # get location (row, col) of this rank's block
-    u = set_x_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD, loc)
-    u = set_y_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD, loc)
+    u = set_x_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD)
+    u = set_y_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD)
 
     return u
 
@@ -221,7 +196,9 @@ def animator_y(U, xg, yg, nx, ny, Nt, method, p, px, py):
     fig = plt.figure()
     ims = []
     for j in xrange(Nt):
-        U_j = np.vstack([arr.transpose() for arr in np.array_split(U[:, :, j].transpose(), p)])
+        U_j = [arr.transpose() for arr in np.array_split(U[:, :, j].transpose(), p)]
+        U_j.reverse()
+        U_j = np.vstack(U_j)
         ims.append((plt.pcolormesh(xg[1:-1], yg[1:-1], U_j, norm=plt.Normalize(0, 1)), ))
 
     print 'done creating meshes, attempting to put them together...'
@@ -245,7 +222,9 @@ def get_ims_x(U, xg, yg, Nt):
 def get_ims_y(U, xg, yg, Nt, p):
     ims = []
     for j in xrange(Nt):
-        U_j = np.vstack([arr.transpose() for arr in np.array_split(U[:, :, j].transpose(), p)])
+        U_j = [arr.transpose() for arr in np.array_split(U[:, :, j].transpose(), p)]
+        U_j.reverse()
+        U_j = np.vstack(U_j)
         ims.append((plt.pcolormesh(xg[1:-1], yg[1:-1], U_j, norm=plt.Normalize(0, 1)), ))
     return ims
 
