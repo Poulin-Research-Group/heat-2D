@@ -4,6 +4,11 @@ if [ ! -d "tests" ]; then
   mkdir -p tests/numpy tests/f2py-f77 tests/f2py-f90
 fi
 
+# retrieve old stack limit, set new stack limit to unlimited
+old_stack_lim=$(ulimit -s)
+echo Current stack limit is $old_stack_lim . Setting it to unlimited.
+ulimit -s unlimited
+
 function test_python () {
   sc="$1"
   T="$2"
@@ -79,3 +84,6 @@ for sc in 1 2; do
   test_all $sc $T 4 1
   test_all $sc $T 1 4
 done
+
+ulimit -s $old_stack_lim
+echo Changed stack limit back to $old_stack_lim .
