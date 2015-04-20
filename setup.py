@@ -6,7 +6,6 @@ import sys
 import numpy as np
 import time
 import os
-import numba
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from heatFortran import heatf
@@ -33,30 +32,6 @@ def calc_u(u, C, Kx, Ky):
     u[1:-1, 1:-1] = C*u[1:-1, 1:-1]  + \
                         Kx*(u[1:-1, 0:-2] + u[1:-1, 2:])  + \
                         Ky*(u[0:-2, 1:-1] + u[2:, 1:-1])
-    return u
-
-
-@numba.jit('float64[:,:](float64[:,:], float64[:,:])')
-def numba_add(M1, M2):
-    return np.add(M1, M2)
-
-
-@numba.jit('float64[:,:](float64, float64[:,:])')
-def numba_scale(c, M):
-    # multiply M by c
-    return np.multiply(c, M)
-
-
-@numba.jit('float64[:,:](float64[:,:], float64, float64, float64)')
-def calc_u_numba(u, C, Kx, Ky):
-    # I'm sorry
-    u[1:-1, 1:-1] = numba_add(
-                        numba_add(
-                            numba_scale(C, u[1:-1:, 1:-1]),
-                            numba_scale(Kx, numba_add(u[1:-1:, 0:-2], u[1:-1, 2:])),
-                        ),
-                        numba_scale(Ky, numba_add(u[0:-2,  1:-1], u[2:, 1:-1]))
-                    )
     return u
 
 

@@ -1,5 +1,5 @@
 from __future__ import division
-from setup import np, time, calc_u, BCs, writer, animator, heatf, calc_u_numba
+from setup import np, time, calc_u, BCs, writer, animator, heatf
 
 
 # initial condition function

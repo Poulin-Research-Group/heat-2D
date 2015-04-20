@@ -1,5 +1,5 @@
 from __future__ import division
-from setup import np, sys, MPI, comm, set_mpi_bdr2D, calc_u, heatf, calc_u_numba,  \
+from setup import np, sys, MPI, comm, set_mpi_bdr2D, calc_u, heatf,                \
                   BCs_X, BCs_Y, BCs_XY, The_Animator, set_x_bdr, set_y_bdr, plt,    \
                   create_x, create_y, serial_bdr, BCs, heatf90, writer, METHODS,     \
                   UPDATERS
@@ -137,8 +137,6 @@ def main(Updater, sc=1, px=2, py=2):
             method = 'f2py77'
         elif Updater is heatf90:
             method = 'f2py90'
-        elif Updater is calc_u_numba:
-            method = 'numba'
         # The_Animator(U, xg, yg, nx, ny, Nt, method, p, px, py)
 
         writer(t_final, method, sc)

@@ -1,7 +1,7 @@
 # make test directory if it doesn't exist
 if [ ! -d "tests" ]; then
   echo Creating test directories...
-  mkdir -p tests/numpy tests/f2py-f77 tests/f2py-f90
+  mkdir -p tests/numpy tests/f2py77 tests/f2py90
 fi
 
 # retrieve old stack limit, set new stack limit to unlimited
