@@ -32,7 +32,7 @@ function test_f2py77 () {
 
   echo f2py-f77
   for ((i=0; i<$T; i++)) do
-    mpirun -np $p python stepping_mpi_2D.py f2py-f77 $sc $px $py
+    mpirun -np $p python stepping_mpi_2D.py f2py77 $sc $px $py
   done
 }
 
@@ -46,7 +46,7 @@ function test_f2py90 () {
 
   echo f2py-f90
   for ((i=0; i<$T; i++)) do
-    mpirun -np $p python stepping_mpi_2D.py f2py-f90 $sc $px $py
+    mpirun -np $p python stepping_mpi_2D.py f2py90 $sc $px $py
   done
 }
 

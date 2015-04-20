@@ -223,5 +223,5 @@ def The_Animator(U, xg, yg, nx, ny, Nt, method, p, px, py):
     im_ani.save('./anims/MPI_SUPER_%s_%dpx_%dpy.mp4' % (method, px, py))
     print 'saved.'
 
-METHODS   = ['numpy', 'f2py-f77', 'f2py-f90']
+METHODS   = ['numpy', 'f2py77', 'f2py90']
 UPDATERS  = [calc_u, heatf, heatf90]

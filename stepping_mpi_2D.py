@@ -86,6 +86,7 @@ def main(Updater, sc=1, px=2, py=2):
     row = np.empty(nx+2, dtype='d')
 
     # define global variables (across all processes)
+    """
     if rank == 0:
         xg = np.linspace(x0 - dx/2, xf + dx/2, Nx+2)
         yg = np.linspace(y0 - dy/2, yf + dy/2, Ny+2)
@@ -97,6 +98,7 @@ def main(Updater, sc=1, px=2, py=2):
         U[:, :, 0] = np.hstack(temp)
     else:
         ug = None
+    """
 
     tagsL = dict([(j, j+1) for j in xrange(p)])
     tagsR = dict([(j,   p + (j+1)) for j in xrange(p)])
@@ -113,6 +115,7 @@ def main(Updater, sc=1, px=2, py=2):
         u = Updater(u, C, Kx, Ky)
         u = Force_BCs(u, rank, p, px, py)
 
+        """
         # Gather parallel vectors to a serial vector
         comm.Gather(u[1:-1, 1:-1].flatten(), ug, root=0)
         if rank == 0:
@@ -121,6 +124,7 @@ def main(Updater, sc=1, px=2, py=2):
             # reshape each part
             temp = [a.reshape(ny, nx) for a in temp]
             U[:, :, j] = np.hstack(temp)
+        """
 
     comm.Barrier()
     t_final = (MPI.Wtime() - t_start)  # stop MPI timer
@@ -130,9 +134,9 @@ def main(Updater, sc=1, px=2, py=2):
         if Updater is calc_u:
             method = 'numpy'
         elif Updater is heatf:
-            method = 'f2py-f77'
+            method = 'f2py77'
         elif Updater is heatf90:
-            method = 'f2py-f90'
+            method = 'f2py90'
         elif Updater is calc_u_numba:
             method = 'numba'
         # The_Animator(U, xg, yg, nx, ny, Nt, method, p, px, py)
@@ -148,8 +152,8 @@ if len(sys.argv) > 1:
 
     argv = sys.argv[1:]
     updater = get_updater[argv[0]]
-    sc   = int(argv[1])
-    px   = int(argv[2])
-    py   = int(argv[3])
+    sc = int(argv[1])
+    px = int(argv[2])
+    py = int(argv[3])
 
     main(updater, sc, px, py)
