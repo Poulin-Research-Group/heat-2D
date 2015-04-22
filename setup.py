@@ -5,27 +5,10 @@ from __future__ import division
 import sys
 import numpy as np
 import time
-import os
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
 from heatFortran import heatf
 from heatFortran90 import heatf as heatf90
 from mpi4py import MPI
 comm = MPI.COMM_WORLD
-
-
-def create_x(px, rank, x0, xf, dx, nx, Nx):
-    col = rank % px
-    xg = np.linspace(x0 - dx/2, xf + dx/2, Nx+2)
-    x  = list(np.array_split(xg[1:-1], px)[col])
-    return np.array([xg[col*nx]] + x + [xg[(col+1)*nx + 1]])
-
-
-def create_y(px, py, rank, y0, yf, dy, ny, Ny):
-    row = rank // px
-    yg = np.linspace(y0 - dy/2, yf + dy/2, Ny+2)
-    y  = list(np.array_split(yg[1:-1], py)[row])
-    return np.array([yg[row*ny]] + y + [yg[(row+1)*ny + 1]])
 
 
 def calc_u(u, C, Kx, Ky):
@@ -35,49 +18,58 @@ def calc_u(u, C, Kx, Ky):
     return u
 
 
-def BCs(u, rank, p, px, py):
-    u[ 0, :] = u[-2, :]  # first row
-    u[-1, :] = u[ 1, :]  # last row
-    u[:,  0] = u[:, -2]  # first col
-    u[:, -1] = u[:,  1]  # last col
-    return u
-
-
-def BCs_X(u, rank, p, px, py):
-    # set X boundary conditions (cols)
-    u[:,  0] = u[:, -2]  # first col
-    u[:, -1] = u[:,  1]  # last col
-
-    return u
-
-
-def BCs_Y(u, rank, p, px, py):
-    # set Y boundary conditions (rows)
-    u[ 0, :] = u[-2, :]   # first row
-    u[-1, :] = u[ 1, :]   # last row
-
-    return u
-
-
-def BCs_XY(u, rank, p, px, py):
-    # place holder to do nothing, as periodic BCs are already put in place via
-    # MPI functions
-    return u
-
-
-def serial_bdr(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD):
-    # placeholder to do nothing, as serial solutions have the periodic BCs set
-    # via the BCs function
-    return u
-
-
 METHODS   = ['numpy', 'f2py77', 'f2py90']
 UPDATERS  = [calc_u, heatf, heatf90]
 
 
-def solver_x(u, ranks, px, py, col, tags, params, save_solution):
+def solver_serial(u, params, save_solution):
+    if save_solution:
+        t_total, U = solver_serial_helper_g(u, params)
+    else:
+        t_total, U = solver_serial_helper(u, params)
+
+    return t_total, U
+
+
+def solver_serial_helper(u, params):
+    C,  Kx, Ky = params.consts
+    Updater, Set_BCs, = params.updater, params.bcs_func
+    Nt = params.Nt
+
+    t_start = time.time()
+
+    # loop through time
+    for j in range(1, Nt):
+        u = Set_BCs(u)
+        u = Updater(u, C, Kx, Ky)
+
+    t_total = (time.time() - t_start)
+    return t_total, None
+
+
+def solver_serial_helper_g(u, params):
+    C,  Kx, Ky = params.consts
+    Updater, Set_BCs, = params.updater, params.bcs_func
+    Nt = params.Nt
+
+    U = create_global_vars(0, params)[1]
+
+    t_start = time.time()
+
+    # loop through time
+    for j in range(1, Nt):
+        u = Set_BCs(u)
+        u = Updater(u, C, Kx, Ky)
+
+        U[:, :, j] = u[1:-1, 1:-1]
+
+    t_total = (time.time() - t_start)
+    return t_total, U
+
+
+def solver_mpi_1D(u, ranks, ghost_arr, tags, params, save_solution):
     """
-    Solves the 2D Heat Equation if it is parallelized only in x. If
+    Solves the 2D Heat Equation if it is parallelized only in x or y. If
     save_solution is True, then solver_x_helper_g is called. Otherwise,
     solver_x_helper is called.
 
@@ -88,15 +80,78 @@ def solver_x(u, ranks, px, py, col, tags, params, save_solution):
     """
 
     if save_solution:
-        t_total, U = solver_x_helper_g(u, ranks, col, tags, params)
+        t_total, U = solver_1D_helper_g(u, ranks, ghost_arr, tags, params)
     else:
-        t_total, U = solver_x_helper(u, ranks, col, tags, params)
+        t_total, U = solver_1D_helper(u, ranks, ghost_arr, tags, params)
+
+    return t_total, U
 
 
-def solver_x_helper(u, ranks, col, tags, params):
+def solver_1D_helper(u, ranks, ghost_arr, tags, params):
     p,  px, py = params.p_vars
     C,  Kx, Ky = params.consts
-    Updater, Set_BCs = params.updater, params.bcs_func
+    Updater, Set_BCs, MPI_Func = params.updater, params.bcs_func, params.mpi_func
+    Nt = params.Nt
+
+    rank, rankLU, rankRD = ranks
+    tagsLU, tagsRD = tags
+
+    comm.Barrier()         # start MPI timer
+    t_start = MPI.Wtime()
+
+    # loop through time
+    for j in range(1, Nt):
+        u = MPI_Func(u, rank, px, ghost_arr, tagsLU, tagsRD, rankLU, rankRD)
+        u = Set_BCs(u)
+        u = Updater(u, C, Kx, Ky)
+
+    comm.Barrier()
+    t_total = (MPI.Wtime() - t_start)  # stop MPI timer
+    return t_total, None
+
+
+def solver_1D_helper_g(u, ranks, ghost_arr, tags, params):
+    p,  px, py = params.p_vars
+    C,  Kx, Ky = params.consts
+    nx, ny, Nt = params.nx, params.ny, params.Nt
+    Updater, Set_BCs, MPI_Func = params.updater, params.bcs_func, params.mpi_func
+
+    rank, rankLU, rankRD = ranks
+    tagsLU, tagsRD = tags
+    ug, U = create_global_vars(rank, params)
+
+    comm.Barrier()         # start MPI timer
+    t_start = MPI.Wtime()
+
+    # loop through time
+    for j in range(1, Nt):
+        u = MPI_Func(u, rank, px, ghost_arr, tagsLU, tagsRD, rankLU, rankRD)
+        u = Set_BCs(u)
+        u = Updater(u, C, Kx, Ky)
+
+        # Gather parallel vectors to a serial vector
+        comm.Gather(u[1:-1, 1:-1].flatten(), ug, root=0)
+        if rank == 0:
+            U[:, :, j] = get_Uj(u, ug, p, nx, ny)
+
+    comm.Barrier()
+    t_total = (MPI.Wtime() - t_start)  # stop MPI timer
+    return t_total, U
+
+
+def solver_mpi_2D(u, ranks, col, row, tags, params, save_solution):
+    if save_solution:
+        t_total, U = solver_2D_helper_g(u, ranks, col, row, tags, params)
+    else:
+        t_total, U = solver_2D_helper(u, ranks, col, row, tags, params)
+
+    return t_total, U
+
+
+def solver_2D_helper(u, ranks, col, row, tags, params):
+    p,  px, py = params.p_vars
+    C,  Kx, Ky = params.consts
+    Updater, MPI_Func = params.updater, params.mpi_func
     Nt = params.Nt
 
     rank, rankL, rankR, rankU, rankD = ranks
@@ -107,20 +162,20 @@ def solver_x_helper(u, ranks, col, tags, params):
 
     # loop through time
     for j in range(1, Nt):
-        u = set_x_bdr(u, rank, px, col, tagsL, tagsR, rankL, rankR)
+        u = MPI_Func(u, rank, px, col, row, tagsL, tagsR, tagsU, tagsD,
+                     rankL, rankR, rankU, rankD)
         u = Updater(u, C, Kx, Ky)
-        u = Set_BCs(u, rank, p, px, py)
 
     comm.Barrier()
     t_total = (MPI.Wtime() - t_start)  # stop MPI timer
     return t_total, None
 
 
-def solver_x_helper_g(u, ranks, col, tags, params):
+def solver_2D_helper_g(u, ranks, col, row, tags, params):
     p,  px, py = params.p_vars
     C,  Kx, Ky = params.consts
-    nx, Ny, Nt = params.nx, params.ny, params.Nt
-    Updater, Set_BCs = params.updater, params.bcs_func
+    nx, ny, Nt = params.nx, params.ny, params.Nt
+    Updater, MPI_Func = params.updater, params.mpi_func
 
     rank, rankL, rankR, rankU, rankD = ranks
     tagsL, tagsR, tagsU, tagsD = tags
@@ -131,18 +186,18 @@ def solver_x_helper_g(u, ranks, col, tags, params):
 
     # loop through time
     for j in range(1, Nt):
-        u = set_x_bdr(u, rank, px, col, tagsL, tagsR, rankL, rankR)
+        u = MPI_Func(u, rank, px, col, row, tagsL, tagsR, tagsU, tagsD,
+                     rankL, rankR, rankU, rankD)
         u = Updater(u, C, Kx, Ky)
-        u = Set_BCs(u, rank, p, px, py)
 
         # Gather parallel vectors to a serial vector
         comm.Gather(u[1:-1, 1:-1].flatten(), ug, root=0)
         if rank == 0:
-            U[:, :, j] = get_Uj(u, ug, p, nx, Ny)
+            U[:, :, j] = get_Uj(u, ug, p, nx, ny)
 
     comm.Barrier()
     t_total = (MPI.Wtime() - t_start)  # stop MPI timer
-    return t_total, None
+    return t_total, U
 
 
 def get_Uj(u, ug, p, nx, ny):
@@ -192,4 +247,28 @@ class Params(object):
         self.t0, self.tf, self.dt, self.Nt = t_vars
         self.p,  self.px, self.py = p_vars
         self.C,  self.Kx, self.Ky = consts
-        self.ics_func, self.bcs_func, self.updater = funcs
+        self.ics_func, self.bcs_func, self.updater, self.mpi_func = funcs
+
+    def set_x_vars(self, x_vars):
+        self.x_vars = x_vars
+        self.x0, self.xf, self.dx, self.Nx, self.nx = x_vars
+
+    def set_y_vars(self, y_vars):
+        self.y_vars = y_vars
+        self.y0, self.yf, self.dy, self.Ny, self.ny = y_vars
+
+    def set_t_vars(self, t_vars):
+        self.t_vars = t_vars
+        self.t0, self.tf, self.dt, self.Nt = t_vars
+
+    def set_p_vars(self, p_vars):
+        self.p_vars = p_vars
+        self.p, self.px, self.py = p_vars
+
+    def set_consts(self, consts):
+        self.consts = consts
+        self.C, self.Kx, self.Ky = consts
+
+    def set_funcs(self, funcs):
+        self.funcs = funcs
+        self.ics_func, self.bcs_func, self.updater, self.mpi_func = funcs

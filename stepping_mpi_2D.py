@@ -1,9 +1,7 @@
 from __future__ import division
-from setup import np, sys, MPI, comm, set_mpi_bdr2D, calc_u, heatf,                \
-                  BCs_X, BCs_Y, BCs_XY, The_Animator, set_x_bdr, set_y_bdr, plt,    \
-                  create_x, create_y, serial_bdr, BCs, heatf90, writer, METHODS,     \
-                  UPDATERS
-
+from setup import np, comm, Params, sys, calc_u, solver_mpi_1D, solver_mpi_2D, \
+                  solver_serial
+from fjp_helpers.funcs import *
 
 # initial condition function
 def f(x, y):
@@ -25,19 +23,6 @@ def main(Updater, sc=1, px=2, py=2):
     rank = comm.Get_rank()   # this process' ID
     nx = Nx/px   # x-grid points per process
     ny = Ny/py   # y-grid points per process
-
-    if px == 1 and py == 1:
-        Set_MPI_Boundaries = serial_bdr
-        Force_BCs = BCs
-    elif px == 1:
-        Set_MPI_Boundaries = set_y_bdr
-        Force_BCs = BCs_X
-    elif py == 1:
-        Set_MPI_Boundaries = set_x_bdr
-        Force_BCs = BCs_Y
-    else:
-        Set_MPI_Boundaries = set_mpi_bdr2D
-        Force_BCs = BCs_XY
 
     indices = [(i, j) for i in xrange(py) for j in xrange(px)]
     procs = np.arange(p).reshape(py, px)
@@ -85,49 +70,37 @@ def main(Updater, sc=1, px=2, py=2):
     col = np.empty(ny+2, dtype='d')
     row = np.empty(nx+2, dtype='d')
 
-    # define global variables (across all processes)
-    """
-    if rank == 0:
-        xg = np.linspace(x0 - dx/2, xf + dx/2, Nx+2)
-        yg = np.linspace(y0 - dy/2, yf + dy/2, Ny+2)
-        ug = np.array([f(xg, j) for j in yg])[1:-1, 1:-1].flatten()
-        temp = np.array_split(ug, p)
-        temp = [a.reshape(ny, nx) for a in temp]
-
-        U = np.empty((ny, p*nx, Nt), dtype=np.float64)
-        U[:, :, 0] = np.hstack(temp)
-    else:
-        ug = None
-    """
-
     tagsL = dict([(j, j+1) for j in xrange(p)])
     tagsR = dict([(j,   p + (j+1)) for j in xrange(p)])
     tagsU = dict([(j, 2*p + (j+1)) for j in xrange(p)])
     tagsD = dict([(j, 3*p + (j+1)) for j in xrange(p)])
     tags  = (tagsL, tagsR, tagsU, tagsD)
 
-    comm.Barrier()         # start MPI timer
-    t_start = MPI.Wtime()
+    SAVE_GLOBAL_SOLUTION = True
+    params = Params([x0, xf, dx, Nx, nx], [y0, yf, dy, Ny, ny], [t0, tf, dt, Nt],
+                    [p, px, py], [C, Kx, Ky], [0, 0, 0, 0])
 
-    # loop through time
-    for j in range(1, Nt):
-        u = Set_MPI_Boundaries(u, rank, px, py, col, row, tags, rankL, rankR, rankU, rankD)
-        u = Updater(u, C, Kx, Ky)
-        u = Force_BCs(u, rank, p, px, py)
+    if px == 1 and py == 1:
+        params.set_funcs([f, set_periodic_BC, Updater, None])
+        t_total, U = solver_serial(u, params, SAVE_GLOBAL_SOLUTION)
 
-        """
-        # Gather parallel vectors to a serial vector
-        comm.Gather(u[1:-1, 1:-1].flatten(), ug, root=0)
-        if rank == 0:
-            # evenly split ug into a list of p parts
-            temp = np.array_split(ug, p)
-            # reshape each part
-            temp = [a.reshape(ny, nx) for a in temp]
-            U[:, :, j] = np.hstack(temp)
-        """
+    elif py == 1:
+        ranks = (rank,  rankL, rankR)
+        tags  = (tagsL, tagsR)
+        params.set_funcs([f, set_periodic_BC_y, Updater, send_columns_periodic])
+        t_total, U = solver_1D(u, ranks, col, tags, params, SAVE_GLOBAL_SOLUTION)
 
-    comm.Barrier()
-    t_final = (MPI.Wtime() - t_start)  # stop MPI timer
+    elif px == 1:
+        ranks = (rank,  rankU, rankD)
+        tags  = (tagsU, tagsD)
+        params.set_funcs([f, set_periodic_BC_x, Updater, send_rows_periodic])
+        t_total, U = solver_mpi_1D(u, ranks, row, tags, params, SAVE_GLOBAL_SOLUTION)
+
+    else:
+        ranks = (rank,  rankL, rankR, rankU, rankD)
+        tags  = (tagsL, tagsR, tagsU, tagsD)
+        params.set_funcs([f, None, Updater, send_periodic])
+        t_total, U = solver_mpi_2D(u, ranks, col, row, tags, params, SAVE_GLOBAL_SOLUTION)
 
     # PLOTTING AND SAVING SOLUTION
     if rank == 0:
@@ -137,12 +110,16 @@ def main(Updater, sc=1, px=2, py=2):
             method = 'f2py77'
         elif Updater is heatf90:
             method = 'f2py90'
-        # The_Animator(U, xg, yg, nx, ny, Nt, method, p, px, py)
 
-        writer(t_final, method, sc)
-        print t_final
+        xg = np.linspace(x0 - dx/2, xf + dx/2, Nx+2)
+        yg = np.linspace(y0 - dy/2, yf + dy/2, Ny+2)
 
-    return t_final
+        mesh_animator(U, xg, yg, nx, ny, Nt, method, p, px, py)
+
+        writer(t_total, method, sc)
+        print t_total
+
+    return t_total
 
 
 if len(sys.argv) > 1:
@@ -155,3 +132,7 @@ if len(sys.argv) > 1:
     py = int(argv[3])
 
     main(updater, sc, px, py)
+
+else:
+    #    method, sc, px, py
+    main(calc_u, 1, 1, 1)
