@@ -1,9 +1,7 @@
 from __future__ import division
 import numpy as np
 import sys
-from setup import solver, comm, calc_u, heatf, heatf90, METHODS, UPDATERS
-from fjp_helpers.animator import mesh_animator
-from fjp_helpers.misc import writer
+from setup import solver, calc_u, heatf, heatf90, Params, METHODS, UPDATERS
 
 
 # initial condition function
@@ -12,13 +10,40 @@ def f(x, y):
     return np.sin(np.pi*x) * np.sin(np.pi*y)
 
 
-# number of processors to use in each direction
-px = 2
-py = 2
+# boundary condition (BC) functions; four functions imposing BCs must be
+# defined: one for serial solutions, and then one each for solutions
+# parallelized in only x, only y, and both x and y.
+# TODO ==============
+# add some BC functions...
 
-# scaling parameters
-sc_x = 1
-sc_y = 1
+# handling command line arguments, e.g.
+#
+#   python stepping_mpi_2D.py numpy 1 1 2 2
+#
+# will run this script using numpy to calculate the next solution, sc_x = 1,
+# sc_y = 1, px = 2, py = 2
+if len(sys.argv) > 1:
+    get_updater = dict(zip(METHODS, UPDATERS))
+
+    argv = sys.argv[1:]
+    Updater = get_updater[argv[0]]
+    px   = int(argv[1])
+    py   = int(argv[2])
+    sc_x = int(argv[3])
+    sc_y = int(argv[4])
+
+# if there are no command line arguments...
+else:
+    # number of processors to use in each direction
+    px = 2
+    py = 2
+
+    # scaling parameters
+    sc_x = 1
+    sc_y = 1
+
+    # Method to use
+    Updater = calc_u
 
 # number of spatial points
 Nx = 128*sc_x
@@ -49,30 +74,39 @@ Kx = 0.02
 Ky = 0.01
 C  = 1 - 2*(Kx + Ky)
 
-# Method to use (numpy, f2py-f77, f2py-f90 ...)
-Updater = calc_u
+# Define type of BCs ('P' = periodic)
+BC_type = 'P'
+BC_s  = None
+BC_x  = None
+BC_y  = None
+BC_xy = None
+
+# if SAVE_TIME is True, then the total time to solve the problem will be saved
+# to a file named filename_time
+SAVE_TIME = True
+filename_time = './tests/time_%dpx_%dpy.txt' % (px, py)
+
+# if ANIMATE is True, then an animation of the solution will be saved to a file
+# named filename_anim
+ANIMATE = False
+filename_anim = './anims/anim_%dpx_%dpy.mp4' % (px, py)
+
+# if SAVE_SOLN is True, then the solution at every time step will be saved to a
+# file named filename_soln
+SAVE_SOLN = False
+filename_soln = './solns/soln_%dpx_%dpy.txt' % (px, py)
 
 # DO NOT ALTER =======================================
-x_vars = [x0, xf, dx, Nx, nx]
-y_vars = [y0, yf, dy, Ny, ny]
-t_vars = [t0, tf, dt, Nt]
-consts = [C, Kx, Ky]
+params = Params()
+params.set_x_vars([x0, xf, dx, Nx, nx])
+params.set_y_vars([y0, yf, dy, Ny, ny])
+params.set_t_vars([t0, tf, dt, Nt])
+params.set_consts([C, Kx, Ky])
+params.set_bc_funcs([BC_s, BC_x, BC_y, BC_xy])
+params.ics = f
+params.bcs_type = BC_type
+params.filename_time = filename_time
+params.filename_anim = filename_anim
+params.filename_soln = filename_soln
 
-
-"""
-# handling command line arguments
-if len(sys.argv) > 1:
-    get_updater = dict(zip(METHODS, UPDATERS))
-
-    argv = sys.argv[1:]
-    updater = get_updater[argv[0]]
-    sc = int(argv[1])
-    px = int(argv[2])
-    py = int(argv[3])
-
-    (Updater, sc, px, py)
-    comm.Barrier()
-    sys.exit()
-"""
-
-solver(Updater, x_vars, y_vars, t_vars, consts, f, sc_x, sc_y, px, py)
+print solver(Updater, params, px, py, SAVE_TIME, ANIMATE, SAVE_SOLN)

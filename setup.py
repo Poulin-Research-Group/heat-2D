@@ -2,9 +2,9 @@
 # heat_2d_setup.py
 
 from __future__ import division
-import sys
 import numpy as np
 import time
+import os
 from heatFortran import heatf
 from heatFortran90 import heatf as heatf90
 from mpi4py import MPI
@@ -26,106 +26,134 @@ METHODS   = ['numpy', 'f2py77', 'f2py90']
 UPDATERS  = [calc_u, heatf, heatf90]
 
 
-def solver(Updater, x_vars, y_vars, t_vars, consts, f, sc_x, sc_y, px, py):
+def solver(Updater, params, px, py, SAVE_TIME=False, ANIMATE=False, SAVE_SOLN=False):
 
     p = px * py
     if p != comm.Get_size():
-        raise Exception("Incorrect number of cores used; MPI is being run with %d, but %d was inputted." % (comm.Get_size(), p))
+        raise Exception("Incorrect number of cores used; MPI is being run with %d, but "
+                        "%d was inputted." % (comm.Get_size(), p))
 
+    # update Params object with p value and updater
+    params.set_p_vars([p, px, py])
+    params.updater = Updater
+
+    # create ranks and tags in all directions
     rank  = comm.Get_rank()
-    indices = [(i, j) for i in xrange(py) for j in xrange(px)]
-    procs = np.arange(p).reshape(py, px)
-    locs  = dict(zip(procs.flatten(), indices))   # map rank to location
-    loc   = locs[rank]
+    rankL, rankR, rankU, rankD = create_ranks(rank, p, px, py)[1:]
+    tagsL, tagsR, tagsU, tagsD = create_tags(p)
 
-    left  = np.roll(procs,  1, 1)
-    right = np.roll(procs, -1, 1)
-    up    = np.roll(procs,  1, 0)
-    down  = np.roll(procs, -1, 0)
-    rankL = left[loc]
-    rankR = right[loc]
-    rankU = up[loc]
-    rankD = down[loc]
+    # get variables and type of BCs
+    x0, xf, dx, Nx, nx = params.x_vars
+    y0, yf, dy, Ny, ny = params.y_vars
+    t0, tf, dt, Nt = params.t_vars
+    C, Kx, Ky = params.consts
+    bcs_type  = params.bcs_type
 
-    x0, xf, dx, Nx, nx = x_vars
-    y0, yf, dy, Ny, ny = y_vars
-    t0, tf, dt, Nt = t_vars
-    C, Kx, Ky = consts
-
+    # split x and y values along each process
     x = create_x(px, rank, x0, xf, dx, nx, Nx)
     y = create_y(px, py, rank, y0, yf, dy, ny, Ny)
-    t  = np.linspace(t0, tf, Nt)
+    t = np.linspace(t0, tf, Nt)
 
-    # BUILD ZE GRID
+    # get the initial condition function
+    f = params.ics
+
+    # BUILD ZE GRID (of initial conditions)
     xx, yy = np.meshgrid(x, y)
-    u   = f(xx, yy)
+    u = f(xx, yy)
+
+    # create ghost column and row
     col = np.empty(ny+2, dtype='d')
     row = np.empty(nx+2, dtype='d')
 
-    tagsL = dict([(j, j+1) for j in xrange(p)])
-    tagsR = dict([(j,   p + (j+1)) for j in xrange(p)])
-    tagsU = dict([(j, 2*p + (j+1)) for j in xrange(p)])
-    tagsD = dict([(j, 3*p + (j+1)) for j in xrange(p)])
-    tags  = (tagsL, tagsR, tagsU, tagsD)
+    # update Params object with BC functions
+    # if the BCs are periodic...
+    if bcs_type == 'P':
+        # if any of the BC functions passed were None, use default periodic BC functions
+        if any([bc is None for bc in params.bcs]):
+            params.set_bc_funcs([set_periodic_BC, set_periodic_BC_x, set_periodic_BC_y,
+                                 set_periodic_BC_placeholder])
 
-    SAVE_GLOBAL_SOLUTION = True
-    params = Params([x0, xf, dx, Nx, nx], [y0, yf, dy, Ny, ny], [t0, tf, dt, Nt],
-                    [p, px, py], [C, Kx, Ky], [0, 0, 0, 0])
-
+    # if we have one process per direction, we're solving it in serial
     if px == 1 and py == 1:
-        params.set_funcs([f, set_periodic_BC, Updater, None])
-        t_total, U = solver_serial(u, params, SAVE_GLOBAL_SOLUTION)
+        params.mpi_func = None
+        params.bc_func  = params.bc_s
+        t_total = solver_serial(u, params, ANIMATE, SAVE_SOLN)
 
+    # if we have one process in y, we're parallelizing the solution in x
     elif py == 1:
         ranks = (rank,  rankL, rankR)
         tags  = (tagsL, tagsR)
-        params.set_funcs([f, set_periodic_BC_y, Updater, send_cols_periodic])
-        t_total, U = solver_1D(u, ranks, col, tags, params, SAVE_GLOBAL_SOLUTION)
+        params.mpi_func = send_cols_periodic
+        params.bc_func  = params.bc_y
+        t_total = solver_mpi_1D(u, ranks, col, tags, params, ANIMATE, SAVE_SOLN)
 
+    # if we have one process in x, we're parallelizing the solution in y
     elif px == 1:
         ranks = (rank,  rankU, rankD)
         tags  = (tagsU, tagsD)
-        params.set_funcs([f, set_periodic_BC_x, Updater, send_rows_periodic])
-        t_total, U = solver_mpi_1D(u, ranks, row, tags, params, SAVE_GLOBAL_SOLUTION)
+        params.mpi_func = send_rows_periodic
+        params.bc_func  = params.bc_x
+        t_total = solver_mpi_1D(u, ranks, row, tags, params, ANIMATE, SAVE_SOLN)
 
+    # otherwise we're parallelizing the solution in both directions
     else:
         ranks = (rank,  rankL, rankR, rankU, rankD)
         tags  = (tagsL, tagsR, tagsU, tagsD)
-        params.set_funcs([f, None, Updater, send_periodic])
-        t_total, U = solver_mpi_2D(u, ranks, col, row, tags, params, SAVE_GLOBAL_SOLUTION)
+        params.mpi_func = send_periodic
+        params.bc_func  = params.bc_xy
+        t_total = solver_mpi_2D(u, ranks, col, row, tags, params, ANIMATE, SAVE_SOLN)
 
-    # PLOTTING AND SAVING SOLUTION
+    # save the time to a file
+    if SAVE_TIME:
+        if rank == 0:
+            filename = params.filename_time.split(os.sep)
+            direc, filename = os.sep.join(filename[:-1]), filename[-1]
+            write_time(t_total, direc, filename)
+    return t_total
+
+
+def animate_solution(U, rank, params):
+    x0, xf, dx, Nx, nx = params.x_vars
+    y0, yf, dy, Ny, ny = params.y_vars
+    p, px, py = params.p_vars
+    Nt = params.Nt
     if rank == 0:
-        if Updater is calc_u:
-            method = 'numpy'
-        elif Updater is heatf:
-            method = 'f2py77'
-        elif Updater is heatf90:
-            method = 'f2py90'
-
         xg = np.linspace(x0 - dx/2, xf + dx/2, Nx+2)
         yg = np.linspace(y0 - dy/2, yf + dy/2, Ny+2)
+        filename = params.filename_anim.split(os.sep)    # split filename according to OS' separator
+        direc, filename = os.sep.join(filename[:-1]), filename[-1]
+        mesh_animator(U, xg, yg, nx, ny, Nt, p, px, py, direc, filename)
 
-        mesh_animator(U, xg, yg, nx, ny, Nt, method, p, px, py)
 
-        # writer(t_total, method, sc)
-        print t_total
+def solver_serial(u, params, animate, save_soln):
+    """
+    Solves the 2D Heat Equation in serial.
+
+    Returns
+    -------
+    float64
+        Total time taken for equation to be solved.
+    """
+    run_normal = True
+
+    if animate:
+        t_total, U = solver_serial_helper_g(u, params)
+        animate_solution(U, 0, params)
+        run_normal = False
+
+    if save_soln:
+        t_total = solver_serial_helper_w(u, params)
+        run_normal = False
+
+    if run_normal:
+        t_total = solver_serial_helper(u, params)
 
     return t_total
 
 
-def solver_serial(u, params, save_solution):
-    if save_solution:
-        t_total, U = solver_serial_helper_g(u, params)
-    else:
-        t_total, U = solver_serial_helper(u, params)
-
-    return t_total, U
-
-
 def solver_serial_helper(u, params):
     C,  Kx, Ky = params.consts
-    Updater, Set_BCs, = params.updater, params.bcs_func
+    Updater, Set_BCs, = params.updater, params.bc_func
     Nt = params.Nt
 
     t_start = time.time()
@@ -136,12 +164,12 @@ def solver_serial_helper(u, params):
         u = Updater(u, C, Kx, Ky)
 
     t_total = (time.time() - t_start)
-    return t_total, None
+    return t_total
 
 
 def solver_serial_helper_g(u, params):
     C,  Kx, Ky = params.consts
-    Updater, Set_BCs, = params.updater, params.bcs_func
+    Updater, Set_BCs, = params.updater, params.bc_func
     Nt = params.Nt
 
     U = create_global_vars(0, params)[1]
@@ -153,36 +181,54 @@ def solver_serial_helper_g(u, params):
         u = Set_BCs(u)
         u = Updater(u, C, Kx, Ky)
 
-        U[:, :, j] = u[1:-1, 1:-1]
+        U[:, j] = u[1:-1, 1:-1].flatten()
 
     t_total = (time.time() - t_start)
     return t_total, U
 
 
-def solver_mpi_1D(u, ranks, ghost_arr, tags, params, save_solution):
-    """
-    Solves the 2D Heat Equation if it is parallelized only in x or y. If
-    save_solution is True, then solver_x_helper_g is called. Otherwise,
-    solver_x_helper is called.
+def solver_serial_helper_w(u, params):
+    Updater, Set_BCs, = params.updater, params.bc_func
+    C, Kx, Ky = params.consts
+    Nt = params.Nt
+    f  = open(params.filename_soln, 'w')
 
-    Returns
-    -------
-    tuple (float64, ndarray)   if save_solution is true
-    tuple (float64, None)      if save_solution is false
-    """
+    t_start = time.time()
 
-    if save_solution:
+    # loop through time
+    for j in range(1, Nt):
+        u = Set_BCs(u)
+        u = Updater(u, C, Kx, Ky)
+
+        np.savetxt(f, u[1:-1, 1:-1])
+        f.write('# Next solution\n')
+
+    t_total = (time.time() - t_start)
+    return t_total
+
+
+def solver_mpi_1D(u, ranks, ghost_arr, tags, params, animate, save_soln):
+    run_normal = True
+
+    if animate:
         t_total, U = solver_1D_helper_g(u, ranks, ghost_arr, tags, params)
-    else:
-        t_total, U = solver_1D_helper(u, ranks, ghost_arr, tags, params)
+        animate_solution(U, ranks[0], params)
+        run_normal = False
 
-    return t_total, U
+    if save_soln:
+        t_total = solver_1D_helper_w(u, ranks, ghost_arr, tags, params)
+        run_normal = False
+
+    if run_normal:
+        t_total = solver_1D_helper(u, ranks, ghost_arr, tags, params)
+
+    return t_total
 
 
 def solver_1D_helper(u, ranks, ghost_arr, tags, params):
-    p,  px, py = params.p_vars
-    C,  Kx, Ky = params.consts
-    Updater, Set_BCs, MPI_Func = params.updater, params.bcs_func, params.mpi_func
+    Updater, Set_BCs, MPI_Func = params.updater, params.bc_func, params.mpi_func
+    p, px, py = params.p_vars
+    C, Kx, Ky = params.consts
     Nt = params.Nt
 
     rank, rankLU, rankRD = ranks
@@ -199,14 +245,14 @@ def solver_1D_helper(u, ranks, ghost_arr, tags, params):
 
     comm.Barrier()
     t_total = (MPI.Wtime() - t_start)  # stop MPI timer
-    return t_total, None
+    return t_total
 
 
 def solver_1D_helper_g(u, ranks, ghost_arr, tags, params):
-    p,  px, py = params.p_vars
-    C,  Kx, Ky = params.consts
-    nx, ny, Nt = params.nx, params.ny, params.Nt
-    Updater, Set_BCs, MPI_Func = params.updater, params.bcs_func, params.mpi_func
+    Updater, Set_BCs, MPI_Func = params.updater, params.bc_func, params.mpi_func
+    p, px, py = params.p_vars
+    C, Kx, Ky = params.consts
+    Nt = params.Nt
 
     rank, rankLU, rankRD = ranks
     tagsLU, tagsRD = tags
@@ -224,26 +270,72 @@ def solver_1D_helper_g(u, ranks, ghost_arr, tags, params):
         # Gather parallel vectors to a serial vector
         comm.Gather(u[1:-1, 1:-1].flatten(), ug, root=0)
         if rank == 0:
-            U[:, :, j] = get_Uj(u, ug, p, nx, ny)
+            U[:, j] = ug
 
     comm.Barrier()
     t_total = (MPI.Wtime() - t_start)  # stop MPI timer
     return t_total, U
 
 
-def solver_mpi_2D(u, ranks, col, row, tags, params, save_solution):
-    if save_solution:
-        t_total, U = solver_2D_helper_g(u, ranks, col, row, tags, params)
-    else:
-        t_total, U = solver_2D_helper(u, ranks, col, row, tags, params)
+def solver_1D_helper_w(u, ranks, ghost_arr, tags, params):
+    Updater, Set_BCs, MPI_Func = params.updater, params.bc_func, params.mpi_func
+    p,  px, py = params.p_vars
+    C,  Kx, Ky = params.consts
+    Nx, Ny, Nt = params.Nx, params.Ny, params.Nt
+    nx, ny     = params.nx, params.ny
+    f  = open(params.filename_soln, 'w')
 
-    return t_total, U
+    if px == 1:
+        reshaper = reshape_soln_y
+    else:
+        reshaper = reshape_soln_x
+
+    rank, rankLU, rankRD = ranks
+    tagsLU, tagsRD = tags
+    ug = np.empty(Ny*Nx, dtype='d')
+
+    comm.Barrier()         # start MPI timer
+    t_start = MPI.Wtime()
+
+    # loop through time
+    for j in range(1, Nt):
+        u = MPI_Func(u, rank, px, ghost_arr, tagsLU, tagsRD, rankLU, rankRD)
+        u = Set_BCs(u)
+        u = Updater(u, C, Kx, Ky)
+
+        # Gather parallel vectors to a serial vector
+        comm.Gather(u[1:-1, 1:-1].flatten(), ug, root=0)
+        if rank == 0:
+            np.savetxt(f, reshaper(ug, nx, ny, p, px, py))
+            f.write('# Next solution\n')
+
+    comm.Barrier()
+    t_total = (MPI.Wtime() - t_start)  # stop MPI timer
+    return t_total
+
+
+def solver_mpi_2D(u, ranks, col, row, tags, params, animate, save_soln):
+    run_normal = True
+
+    if animate:
+        t_total, U = solver_2D_helper_g(u, ranks, col, row, tags, params)
+        animate_solution(U, ranks[0], params)
+        run_normal = False
+
+    if save_soln:
+        t_total = solver_2D_helper_w(u, ranks, col, row, tags, params)
+        run_normal = False
+
+    if run_normal:
+        t_total = solver_2D_helper(u, ranks, col, row, tags, params)
+
+    return t_total
 
 
 def solver_2D_helper(u, ranks, col, row, tags, params):
-    p,  px, py = params.p_vars
-    C,  Kx, Ky = params.consts
     Updater, MPI_Func = params.updater, params.mpi_func
+    p, px, py = params.p_vars
+    C, Kx, Ky = params.consts
     Nt = params.Nt
 
     rank, rankL, rankR, rankU, rankD = ranks
@@ -260,14 +352,14 @@ def solver_2D_helper(u, ranks, col, row, tags, params):
 
     comm.Barrier()
     t_total = (MPI.Wtime() - t_start)  # stop MPI timer
-    return t_total, None
+    return t_total
 
 
 def solver_2D_helper_g(u, ranks, col, row, tags, params):
-    p,  px, py = params.p_vars
-    C,  Kx, Ky = params.consts
-    nx, ny, Nt = params.nx, params.ny, params.Nt
     Updater, MPI_Func = params.updater, params.mpi_func
+    p, px, py = params.p_vars
+    C, Kx, Ky = params.consts
+    Nt = params.Nt
 
     rank, rankL, rankR, rankU, rankD = ranks
     tagsL, tagsR, tagsU, tagsD = tags
@@ -285,37 +377,59 @@ def solver_2D_helper_g(u, ranks, col, row, tags, params):
         # Gather parallel vectors to a serial vector
         comm.Gather(u[1:-1, 1:-1].flatten(), ug, root=0)
         if rank == 0:
-            U[:, :, j] = get_Uj(u, ug, p, nx, ny)
+            U[:, j] = ug
 
     comm.Barrier()
     t_total = (MPI.Wtime() - t_start)  # stop MPI timer
     return t_total, U
 
 
-def get_Uj(u, ug, p, nx, ny):
-    # evenly split ug into a list of p parts
-    temp = np.array_split(ug, p)
-    # reshape each part
-    temp = [a.reshape(ny, nx) for a in temp]
-    return np.hstack(temp)
+def solver_2D_helper_w(u, ranks, ghost_arr, tags, params):
+    Updater, MPI_Func = params.updater, params.mpi_func
+    p,  px, py = params.p_vars
+    C,  Kx, Ky = params.consts
+    Nx, Ny, Nt = params.Nx, params.Ny, params.Nt
+    nx, ny     = params.nx, params.ny
+    f = open(params.filename_soln, 'w')
+
+    rank,  rankL, rankR, rankU, rankD = ranks
+    tagsL, tagsR, tagsU, tagsD = tags
+    ug = np.empty(Ny*Nx, dtype='d')
+
+    comm.Barrier()         # start MPI timer
+    t_start = MPI.Wtime()
+
+    # loop through time
+    for j in range(1, Nt):
+        u = MPI_Func(u, rank, px, col, row, tagsL, tagsR, tagsU, tagsD,
+                     rankL, rankR, rankU, rankD)
+        u = Updater(u, C, Kx, Ky)
+
+        # Gather parallel vectors to a serial vector
+        comm.Gather(u[1:-1, 1:-1].flatten(), ug, root=0)
+        if rank == 0:
+            np.savetxt(f, reshape_soln_xy(ug, nx, ny, p, px, py))
+            f.write('# Next solution\n')
+
+    comm.Barrier()
+    t_total = (MPI.Wtime() - t_start)  # stop MPI timer
+    return t_total
 
 
 def create_global_vars(rank, params):
     x0, xf, dx, Nx, nx = params.x_vars
     y0, yf, dy, Ny, ny = params.y_vars
-    nx, ny, Nt = params.nx, params.ny, params.Nt
-    p = params.p
-    f = params.ics_func
+    Nt = params.Nt
+    f  = params.ics
 
     if rank == 0:
         xg = np.linspace(x0 - dx/2, xf + dx/2, Nx+2)
         yg = np.linspace(y0 - dy/2, yf + dy/2, Ny+2)
-        ug = np.array([f(xg, j) for j in yg])[1:-1, 1:-1].flatten()
-        temp = np.array_split(ug, p)
-        temp = [a.reshape(ny, nx) for a in temp]
+        xx, yy = np.meshgrid(xg, yg)
+        ug = f(xx, yy)[1:-1, 1:-1].flatten()
 
-        U = np.empty((ny, p*nx, Nt), dtype=np.float64)
-        U[:, :, 0] = np.hstack(temp)
+        U = np.empty((Nx*Ny, Nt), dtype=np.float64)
+        U[:, 0] = ug
     else:
         ug = None
         U  = None
@@ -323,23 +437,22 @@ def create_global_vars(rank, params):
     return ug, U
 
 
+def set_periodic_BC_placeholder(u):
+    return u
+
+
 class Params(object):
     """Placeholder for several constants and what not."""
-    def __init__(self, x_vars, y_vars, t_vars, p_vars, consts, funcs):
+    def __init__(self):
         super(Params, self).__init__()
-        self.x_vars = x_vars
-        self.y_vars = y_vars
-        self.t_vars = t_vars
-        self.p_vars = p_vars
-        self.consts = consts
-        self.funcs  = funcs
+        self.x_vars, self.y_vars, self.t_vars, self.p_vars, self.consts = 5*[None]
+        self.funcs = {}
 
-        self.x0, self.xf, self.dx, self.Nx, self.nx = x_vars
-        self.y0, self.yf, self.dy, self.Ny, self.ny = y_vars
-        self.t0, self.tf, self.dt, self.Nt = t_vars
-        self.p,  self.px, self.py = p_vars
-        self.C,  self.Kx, self.Ky = consts
-        self.ics_func, self.bcs_func, self.updater, self.mpi_func = funcs
+    def __str__(self):
+        return "x-vars: %s\ny-vars: %s\nt-vars: %s\np-vars: %s\nconsts: %s\n""" % (
+            str(self.x_vars), str(self.y_vars), str(self.t_vars), str(self.p_vars),
+            str(self.consts)
+        )
 
     def set_x_vars(self, x_vars):
         self.x_vars = x_vars
@@ -362,5 +475,17 @@ class Params(object):
         self.C, self.Kx, self.Ky = consts
 
     def set_funcs(self, funcs):
+        # funcs is a dictionary
         self.funcs = funcs
-        self.ics_func, self.bcs_func, self.updater, self.mpi_func = funcs
+        self.ics = funcs['ic']
+        self.bc_s, self.bc_x  = funcs['bc_s'], funcs['bc_x']
+        self.bc_y, self.bc_xy = funcs['bc_y'], funcs['bc_xy']
+        self.updater  = funcs['updater']
+        self.mpi_func = funcs['mpi']
+
+    def set_bc_funcs(self, bc_funcs):
+        # bc_funcs is an array, [serial, x, y, xy]
+        self.bc_s, self.bc_x, self.bc_y, self.bc_xy = bc_funcs
+        self.funcs['bc_s'], self.funcs['bc_x']  = self.bc_s, self.bc_x
+        self.funcs['bc_y'], self.funcs['bc_xy'] = self.bc_y, self.bc_xy
+        self.bcs = bc_funcs
