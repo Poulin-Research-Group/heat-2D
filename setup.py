@@ -108,6 +108,8 @@ def solver(Updater, params, px, py, SAVE_TIME=False, ANIMATE=False, SAVE_SOLN=Fa
         if rank == 0:
             filename = params.filename_time.split(os.sep)
             direc, filename = os.sep.join(filename[:-1]), filename[-1]
+            if not os.path.isdir(direc):
+                os.makedirs(direc)
             write_time(t_total, direc, filename)
     return t_total
 

@@ -4,6 +4,10 @@ import sys
 from setup import solver, calc_u, heatf, heatf90, Params, METHODS, UPDATERS
 
 
+get_updater = dict(zip(METHODS, UPDATERS))
+get_method  = dict(zip(UPDATERS, METHODS))
+
+
 # initial condition function
 def f(x, y):
     # x, y can be arrays
@@ -23,8 +27,6 @@ def f(x, y):
 # will run this script using numpy to calculate the next solution, sc_x = 1,
 # sc_y = 1, px = 2, py = 2
 if len(sys.argv) > 1:
-    get_updater = dict(zip(METHODS, UPDATERS))
-
     argv = sys.argv[1:]
     Updater = get_updater[argv[0]]
     px   = int(argv[1])
@@ -44,6 +46,9 @@ else:
 
     # Method to use
     Updater = calc_u
+
+# define the time filename below using the method name
+method = get_method[Updater]
 
 # number of spatial points
 Nx = 128*sc_x
@@ -84,7 +89,7 @@ BC_xy = None
 # if SAVE_TIME is True, then the total time to solve the problem will be saved
 # to a file named filename_time
 SAVE_TIME = True
-filename_time = './tests/time_%dpx_%dpy.txt' % (px, py)
+filename_time = './tests/%s/time_%dpx_%dpy.txt' % (method, px, py)
 
 # if ANIMATE is True, then an animation of the solution will be saved to a file
 # named filename_anim
