@@ -1,11 +1,12 @@
 from __future__ import division
 import numpy as np
 import sys
-from setup import solver, calc_u, heatf, heatf90, Params, METHODS, UPDATERS
+from setup import solver, Params, METHODS, UPDATERS
+from mpi4py import MPI
 
 
+# map method name to the actual function
 get_updater = dict(zip(METHODS, UPDATERS))
-get_method  = dict(zip(UPDATERS, METHODS))
 
 
 # initial condition function
@@ -24,11 +25,12 @@ def f(x, y):
 #
 #   python stepping_mpi_2D.py numpy 1 1 2 2
 #
-# will run this script using numpy to calculate the next solution, sc_x = 1,
-# sc_y = 1, px = 2, py = 2
+# will run this script using numpy to calculate the next solution, px = 1,
+# py = 1, sc_x = 2, sc_y = 2
+
 if len(sys.argv) > 1:
     argv = sys.argv[1:]
-    Updater = get_updater[argv[0]]
+    method = argv[0]
     px   = int(argv[1])
     py   = int(argv[2])
     sc_x = int(argv[3])
@@ -37,18 +39,16 @@ if len(sys.argv) > 1:
 # if there are no command line arguments...
 else:
     # number of processors to use in each direction
-    px = 2
-    py = 2
+    px = 1
+    py = 1
 
     # scaling parameters
-    sc_x = 1
-    sc_y = 1
+    sc_x = 2
+    sc_y = 2
 
-    # Method to use
-    Updater = calc_u
+    # method to use; options are 'numpy', 'f2py77', 'f2py90'
+    method = 'numpy'
 
-# define the time filename below using the method name
-method = get_method[Updater]
 
 # number of spatial points
 Nx = 128*sc_x
@@ -89,7 +89,7 @@ BC_xy = None
 # if SAVE_TIME is True, then the total time to solve the problem will be saved
 # to a file named filename_time
 SAVE_TIME = True
-filename_time = './tests/%s/time_%dpx_%dpy.txt' % (method, px, py)
+filename_time = './tests/%s/%dscx_%dscy_%dpx_%dpy.txt' % (method, sc_x, sc_y, px, py)
 
 # if ANIMATE is True, then an animation of the solution will be saved to a file
 # named filename_anim
@@ -102,6 +102,8 @@ SAVE_SOLN = False
 filename_soln = './solns/soln_%dpx_%dpy.txt' % (px, py)
 
 # DO NOT ALTER =======================================
+Updater = get_updater[method]
+
 params = Params()
 params.set_x_vars([x0, xf, dx, Nx, nx])
 params.set_y_vars([y0, yf, dy, Ny, ny])
@@ -114,4 +116,4 @@ params.filename_time = filename_time
 params.filename_anim = filename_anim
 params.filename_soln = filename_soln
 
-print solver(Updater, params, px, py, SAVE_TIME, ANIMATE, SAVE_SOLN)
+solver(Updater, params, px, py, SAVE_TIME, ANIMATE, SAVE_SOLN)

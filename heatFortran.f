@@ -12,8 +12,8 @@ cf2py intent(in,out) :: u
       do c=1,Nx
         do r=1,Ny
           u(r,c) = K*u(r,c)
-     &           + Kx*(u(r+1, c) + u(r-1, c))
-     &           + Ky*(u(r, c+1) + u(r, c-1))
+     &           + Ky*(u(r+1, c) + u(r-1, c))
+     &           + Kx*(u(r, c+1) + u(r, c-1))
         enddo
       enddo
 

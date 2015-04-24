@@ -5,8 +5,8 @@ from __future__ import division
 import numpy as np
 import time
 import os
-from heatFortran import heatf
-from heatFortran90 import heatf as heatf90
+from heatFortran77 import heatf as heat_f77
+from heatFortran90 import heatf as heat_f90
 from mpi4py import MPI
 from fjp_helpers.animator import mesh_animator
 from fjp_helpers.bc import *
@@ -15,30 +15,31 @@ from fjp_helpers.misc import *
 comm = MPI.COMM_WORLD
 
 
-def calc_u(u, C, Kx, Ky):
+def heat_np(u, C, Kx, Ky):
     u[1:-1, 1:-1] = C*u[1:-1, 1:-1]  + \
-                        Kx*(u[1:-1, 0:-2] + u[1:-1, 2:])  + \
-                        Ky*(u[0:-2, 1:-1] + u[2:, 1:-1])
+                        Ky*(u[1:-1, 0:-2] + u[1:-1, 2:])  + \
+                        Kx*(u[0:-2, 1:-1] + u[2:, 1:-1])
     return u
 
 
 METHODS   = ['numpy', 'f2py77', 'f2py90']
-UPDATERS  = [calc_u, heatf, heatf90]
+UPDATERS  = [heat_np, heat_f77, heat_f90]
 
 
 def solver(Updater, params, px, py, SAVE_TIME=False, ANIMATE=False, SAVE_SOLN=False):
 
     p = px * py
     if p != comm.Get_size():
-        raise Exception("Incorrect number of cores used; MPI is being run with %d, but "
-                        "%d was inputted." % (comm.Get_size(), p))
+        if comm.Get_rank() == 0:
+            raise Exception("Incorrect number of cores used; MPI is being run with %d, "
+                            "but %d was inputted." % (comm.Get_size(), p))
 
     # update Params object with p value and updater
     params.set_p_vars([p, px, py])
     params.updater = Updater
 
     # create ranks and tags in all directions
-    rank  = comm.Get_rank()
+    rank = comm.Get_rank()
     rankL, rankR, rankU, rankD = create_ranks(rank, p, px, py)[1:]
     tagsL, tagsR, tagsU, tagsD = create_tags(p)
 
@@ -103,14 +104,17 @@ def solver(Updater, params, px, py, SAVE_TIME=False, ANIMATE=False, SAVE_SOLN=Fa
         params.bc_func  = params.bc_xy
         t_total = solver_mpi_2D(u, ranks, col, row, tags, params, ANIMATE, SAVE_SOLN)
 
-    # save the time to a file
-    if SAVE_TIME:
-        if rank == 0:
+    if rank == 0:
+        # save the time to a file
+        if SAVE_TIME:
             filename = params.filename_time.split(os.sep)
             direc, filename = os.sep.join(filename[:-1]), filename[-1]
             if not os.path.isdir(direc):
                 os.makedirs(direc)
             write_time(t_total, direc, filename)
+
+        print t_total
+
     return t_total
 
 
