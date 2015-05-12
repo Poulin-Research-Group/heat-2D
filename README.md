@@ -2,7 +2,7 @@
 solving the heat equation using python, fortran77 and fortran90
 
 ## running the code
-before the code is run, the Fortran code must be compiled using f2py, and the fjp_helpers must be either installed on your computer or put into the directory.
+before the code is run, the Fortran code must be compiled using f2py.
 
 ### compiling
 
@@ -39,21 +39,6 @@ ulimit -s OLD_STACK_LIMIT
 ```
 
 where `OLD_STACK_LIMIT` is the value.
-
-### installing fjp_helpers
-this code depends on fjp_helpers, which can be installed either through pip:
-
-```
-pip install fjp_helpers
-```
-
-(to install globally, this may need to be run with permissions). to avoid installing it globally, you can simply run
-
-```
-bash install_helpers.sh
-```
-
-and this will create the directory `fjp_helpers/`.
 
 ### actually running the code
 edit the different parameters in the `main.py` file
