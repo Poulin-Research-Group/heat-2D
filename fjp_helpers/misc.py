@@ -2,7 +2,7 @@ import os
 import numpy as np
 
 
-def write_time(t_total, direc, filename):
+def write_time(t_total, px, py, sc_x, sc_y, method, filename):
     """
     Write the time to a file in a specific directory. Check to see if the
     directory exists first, and then if the file exists. If either of these are
@@ -21,18 +21,17 @@ def write_time(t_total, direc, filename):
     """
 
     # check to see if directory exists; if it doesn't, create it.
-    if not os.path.isdir(direc):
-        os.makedirs(direc)
-
-    filename = os.path.join(direc, filename)
+    if not os.path.isdir(os.path.dirname(filename)):
+        os.makedirs(os.path.dirname(filename))
 
     # check to see if file exists; if it doesn't, create it.
     if not os.path.exists(filename):
-        open(filename, 'a').close()
+        F = open(filename, 'w')
+        F.write("duration,px,py,sc_x,sc_y,method\n")
 
     # write time to the file
     F = open(filename, 'a')
-    F.write('%f\n' % t_total)
+    F.write('%f,%d,%d,%d,%d,%s\n' % (t_total, px, py, sc_x, sc_y, method))
     F.close()
 
 

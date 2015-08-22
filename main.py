@@ -89,7 +89,8 @@ BC_xy = None
 # if SAVE_TIME is True, then the total time to solve the problem will be saved
 # to a file named filename_time
 SAVE_TIME = True
-filename_time = './tests/%s/%dscx_%dscy_%dpx_%dpy.txt' % (method, sc_x, sc_y, px, py)
+# filename_time = './tests/%s/%dscx_%dscy_%dpx_%dpy.txt' % (method, sc_x, sc_y, px, py)
+filename_time = './tests/times.csv'
 
 # if ANIMATE is True, then an animation of the solution will be saved to a file
 # named filename_anim
@@ -110,10 +111,12 @@ params.set_y_vars([y0, yf, dy, Ny, ny])
 params.set_t_vars([t0, tf, dt, Nt])
 params.set_consts([C, Kx, Ky])
 params.set_bc_funcs([BC_s, BC_x, BC_y, BC_xy])
+params.set_sc_vars([sc_x, sc_y])
 params.ics = f
 params.bcs_type = BC_type
 params.filename_time = filename_time
 params.filename_anim = filename_anim
 params.filename_soln = filename_soln
+params.method = method
 
 solver(Updater, params, px, py, SAVE_TIME, ANIMATE, SAVE_SOLN)

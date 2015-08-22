@@ -107,11 +107,7 @@ def solver(Updater, params, px, py, SAVE_TIME=False, ANIMATE=False, SAVE_SOLN=Fa
     if rank == 0:
         # save the time to a file
         if SAVE_TIME:
-            filename = params.filename_time.split(os.sep)
-            direc, filename = os.sep.join(filename[:-1]), filename[-1]
-            if not os.path.isdir(direc):
-                os.makedirs(direc)
-            write_time(t_total, direc, filename)
+            write_time(t_total, px, py, params.sc_x, params.sc_y, params.method, params.filename_time)
 
         print t_total
 
@@ -475,6 +471,10 @@ class Params(object):
     def set_p_vars(self, p_vars):
         self.p_vars = p_vars
         self.p, self.px, self.py = p_vars
+
+    def set_sc_vars(self, sc_vars):
+        self.sc_vars = sc_vars
+        self.sc_x, self.sc_y = sc_vars
 
     def set_consts(self, consts):
         self.consts = consts

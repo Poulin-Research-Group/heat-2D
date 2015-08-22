@@ -1,12 +1,14 @@
 libs/
-**/*.png
-**/*.pdf
-**/*.mp4
-**/*.txt
-**/*.pyc
-**/*.save
-**/*.so
+tests/
+*.png
+*.pdf
+*.mp4
+*.txt
+*.pyc
+*.save
+*.so
 
 NEW_USERS.html
+README.html
 
 .ipynb_checkpoints/
