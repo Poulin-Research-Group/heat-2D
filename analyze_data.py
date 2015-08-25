@@ -33,13 +33,6 @@ class Analyzer(object):
         return df_method.agg({"duration": "mean"}), df_method.agg({"duration": "std"})
 
 
-    def Get_Numpy_Data(self):
-        """
-        Gets the Numpy durations for each px, py, sc.
-        """
-        self.numpy_data_mean, self.numpy_data_std = self._Get_Method_Durations_All("numpy")
-
-
     def Plot_Method_Data(self, method):
         n_px, n_py = len(self.pxs), len(self.pys)
         n_p = n_px * n_py
